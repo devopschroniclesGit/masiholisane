@@ -1,0 +1,167 @@
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Masiholisane — Local Development Stack
+# Run: docker compose up -d
+# Stop: docker compose down
+# Logs: docker compose logs -f
+# Reset: docker compose down -v (removes all data)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: masi_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: masi_user
+      POSTGRES_PASSWORD: masi_password
+      POSTGRES_DB: masiholisane_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "masi_user", "-d", "masiholisane_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: masi_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── RabbitMQ ─────────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: masi_rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: masi
+      RABBITMQ_DEFAULT_PASS: masi_dev_pass
+      RABBITMQ_DEFAULT_VHOST: masiholisane
+      RABBITMQ_ERLANG_COOKIE: "MASIHOLISANE_DEV_COOKIE_2025"
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # Management UI — http://localhost:15672
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ── stokvel-service ──────────────────────────────────────────────────────────
+  stokvel-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: stokvel
+    container_name: masi_stokvel
+    restart: unless-stopped
+    ports:
+      - "3005:3005"
+    environment:
+      PORT: 3005
+      NODE_ENV: development
+      DATABASE_URL: postgresql://masi_user:masi_password@postgres:5432/masiholisane_db
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://masi:masi_dev_pass@rabbitmq:5672/masiholisane
+      JWT_SECRET: local_dev_jwt_secret_change_in_production
+      JWT_EXPIRES_IN: 15m
+      TIER_1_AMOUNT: "50000"
+      TIER_2_AMOUNT: "100000"
+      TIER_3_AMOUNT: "200000"
+      PLATFORM_FEE_PERCENT: "2"
+      BACKUP_FUND_PERCENT: "5"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./services/stokvel:/app/services/stokvel
+      - ./shared:/app/shared
+      - ./prisma:/app/prisma
+      - /app/node_modules
+
+  # ── trust-service ────────────────────────────────────────────────────────────
+  trust-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: trust
+    container_name: masi_trust
+    restart: unless-stopped
+    ports:
+      - "3006:3006"
+    environment:
+      PORT: 3006
+      NODE_ENV: development
+      DATABASE_URL: postgresql://masi_user:masi_password@postgres:5432/masiholisane_db
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://masi:masi_dev_pass@rabbitmq:5672/masiholisane
+      JWT_SECRET: local_dev_jwt_secret_change_in_production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/trust:/app/services/trust
+      - ./shared:/app/shared
+      - ./prisma:/app/prisma
+      - /app/node_modules
+
+  # ── escrow-service ───────────────────────────────────────────────────────────
+  escrow-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: escrow
+    container_name: masi_escrow
+    restart: unless-stopped
+    ports:
+      - "3007:3007"
+    environment:
+      PORT: 3007
+      NODE_ENV: development
+      DATABASE_URL: postgresql://masi_user:masi_password@postgres:5432/masiholisane_db
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://masi:masi_dev_pass@rabbitmq:5672/masiholisane
+      JWT_SECRET: local_dev_jwt_secret_change_in_production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/escrow:/app/services/escrow
+      - ./shared:/app/shared
+      - ./prisma:/app/prisma
+      - /app/node_modules
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:

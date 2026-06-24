@@ -1,0 +1,29 @@
+{
+  "name": "masiholisane",
+  "version": "1.0.0",
+  "description": "Masiholisane - Digital Stokvel Platform",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "db:generate": "npx prisma generate --schema=./prisma/schema.prisma",
+    "db:push": "npx prisma db push --schema=./prisma/schema.prisma",
+    "db:studio": "npx prisma studio --schema=./prisma/schema.prisma",
+    "db:seed": "node prisma/seed.js",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.10.0",
+    "amqplib": "^2.0.1",
+    "bcryptjs": "^2.4.3",
+    "express-rate-limit": "^8.5.2",
+    "ioredis": "^5.11.1",
+    "jsonwebtoken": "^9.0.3",
+    "prisma": "^5.10.0",
+    "winston": "^3.19.0"
+  }
+}

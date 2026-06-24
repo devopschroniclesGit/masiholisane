@@ -1,0 +1,262 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Masiholisane — Prisma Schema
+// Run: npx prisma db push     → apply to database
+// Run: npx prisma generate    → regenerate client
+// Run: npx prisma studio      → open visual browser
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXISTING TABLES (from FinPay — do not modify the structure)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  idNumber  String?  @unique // SA ID number — set after verification
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  account        Account?
+  trustScore     TrustScore?
+  stokvelMembers StokvelMember[]
+  contributions  StokvelContribution[]
+  trustEvents    TrustScoreEvent[]
+
+  @@index([email])
+}
+
+model Account {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  balance   Int      @default(0) // stored in cents — R500 = 50000
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Transaction {
+  id             String   @id @default(uuid())
+  fromAccountId  String? // null for deposits from external
+  toAccountId    String? // null for withdrawals to external
+  amount         Int // in cents
+  type           String // deposit | withdrawal | transfer | stokvel_contribution | stokvel_payout | security_deposit | security_refund | backup_fund | platform_fee
+  status         String   @default("completed") // pending | completed | failed
+  idempotencyKey String   @unique
+  description    String?
+  metadata       Json? // any extra data
+  createdAt      DateTime @default(now())
+
+  @@index([fromAccountId])
+  @@index([toAccountId])
+  @@index([idempotencyKey])
+  @@index([type])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW TABLES — Masiholisane Stokvel
+// ─────────────────────────────────────────────────────────────────────────────
+
+model StokvelGroup {
+  id           String   @id @default(uuid())
+  tier         Int // 1 = R500/month, 2 = R1000/month, 3 = R2000/month
+  status       String   @default("forming")
+  // forming | active | completed | cancelled | suspended
+  cycleDay     Int      @default(15) // day of month (1-28) contributions collected
+  currentCycle Int      @default(0) // 0 = not started, 1-3 = active cycle
+  expiresAt    DateTime // if still forming after 7 days → cancelled
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  members StokvelMember[]
+  cycles  StokvelCycle[]
+  escrow  EscrowAccount?
+
+  @@index([tier, status])
+  @@index([status])
+}
+
+model StokvelMember {
+  id        String   @id @default(uuid())
+  groupId   String
+  userId    String
+  position  Int // 1, 2, or 3 — payout order (1 = first to receive)
+  status    String   @default("active")
+  // active | suspended | completed | blacklisted
+  joinedAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  group          StokvelGroup          @relation(fields: [groupId], references: [id])
+  user           User                  @relation(fields: [userId], references: [id])
+  contributions  StokvelContribution[]
+  swapsInitiated PositionSwap[]        @relation("SwapInitiator")
+  swapsReceived  PositionSwap[]        @relation("SwapReceiver")
+
+  @@unique([groupId, userId]) // one membership per group
+  @@unique([groupId, position]) // no duplicate positions in a group
+  @@index([userId])
+  @@index([groupId])
+}
+
+model StokvelCycle {
+  id          String    @id @default(uuid())
+  groupId     String
+  cycleNumber Int // 1, 2, or 3
+  recipientId String // userId of member who receives the payout
+  status      String    @default("pending")
+  // pending | collecting | paid | failed | suspended
+  dueDate     DateTime // date contributions must be in by
+  paidAt      DateTime? // when the payout was sent
+  totalPot    Int       @default(0) // running total in cents
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  group         StokvelGroup          @relation(fields: [groupId], references: [id])
+  contributions StokvelContribution[]
+
+  @@unique([groupId, cycleNumber])
+  @@index([groupId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+model StokvelContribution {
+  id        String    @id @default(uuid())
+  cycleId   String
+  groupId   String
+  userId    String
+  memberId  String
+  amount    Int // in cents
+  type      String // contribution | backup_fund | platform_fee
+  status    String    @default("pending")
+  // pending | paid | missed | covered_by_backup
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  // Relations
+  cycle           StokvelCycle   @relation(fields: [cycleId], references: [id])
+  user            User           @relation(fields: [userId], references: [id])
+  StokvelMember   StokvelMember? @relation(fields: [stokvelMemberId], references: [id])
+  stokvelMemberId String?
+
+  @@unique([cycleId, userId, type]) // one of each type per user per cycle
+  @@index([cycleId])
+  @@index([userId])
+  @@index([status])
+}
+
+model PositionSwap {
+  id          String   @id @default(uuid())
+  groupId     String
+  initiatorId String // memberId requesting the swap
+  receiverId  String // memberId being asked to swap
+  status      String   @default("pending")
+  // pending | accepted | rejected | expired
+  expiresAt   DateTime // 24 hours after group forms
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  initiator StokvelMember @relation("SwapInitiator", fields: [initiatorId], references: [id])
+  receiver  StokvelMember @relation("SwapReceiver", fields: [receiverId], references: [id])
+
+  @@index([groupId])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW TABLES — Trust Score
+// ─────────────────────────────────────────────────────────────────────────────
+
+model TrustScore {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  score     Int      @default(0)
+  tier      String   @default("restricted")
+  // restricted(0-29) | new(30-49) | trusted(50-69) | good(70-89) | elite(90-100)
+  updatedAt DateTime @updatedAt
+
+  user    User              @relation(fields: [userId], references: [id])
+  history TrustScoreEvent[]
+
+  @@index([userId])
+  @@index([tier])
+}
+
+model TrustScoreEvent {
+  id          String   @id @default(uuid())
+  userId      String
+  scoreId     String
+  event       String // id_verified | profile_completed | on_time_contribution
+  // completed_cycle | missed_contribution | late_contribution
+  // reinstated | referred_member | received_payout_then_missed
+  delta       Int // +10, -20, etc.
+  scoreBefore Int
+  scoreAfter  Int
+  reason      String
+  metadata    Json? // groupId, cycleId etc
+  createdAt   DateTime @default(now())
+
+  user  User       @relation(fields: [userId], references: [id])
+  score TrustScore @relation(fields: [scoreId], references: [id])
+
+  @@index([userId])
+  @@index([event])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW TABLES — Escrow
+// ─────────────────────────────────────────────────────────────────────────────
+
+model EscrowAccount {
+  id           String   @id @default(uuid())
+  groupId      String   @unique
+  securityFund Int      @default(0) // security deposits in cents
+  backupFund   Int      @default(0) // backup contributions in cents
+  platformFees Int      @default(0) // accrued platform fees in cents
+  securityPaid Boolean  @default(false) // true = all 3 deposits collected
+  released     Boolean  @default(false) // true = all funds returned on completion
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  group        StokvelGroup        @relation(fields: [groupId], references: [id])
+  transactions EscrowTransaction[]
+
+  @@index([groupId])
+}
+
+model EscrowTransaction {
+  id        String   @id @default(uuid())
+  escrowId  String
+  userId    String? // null for platform fee transfers
+  type      String // security_deposit | backup_fund | platform_fee
+  // security_refund | backup_refund | backup_used | dropout_cover
+  amount    Int // in cents
+  direction String // in | out
+  reason    String
+  createdAt DateTime @default(now())
+
+  escrow EscrowAccount @relation(fields: [escrowId], references: [id])
+
+  @@index([escrowId])
+  @@index([userId])
+  @@index([type])
+}
