@@ -29,63 +29,120 @@ async function contribute(req, res, next) {
     const { groupId } = req.params;
     const userId = req.user.id;
 
-    const member = await prisma.stokvelMember.findFirst({ where: { groupId, userId } });
+    // 1. Check membership
+    const member = await prisma.stokvelMember.findFirst({
+      where: { groupId, userId },
+    });
     if (!member) return sendError(res, 403, 'You are not a member of this group');
-    if (member.status === 'suspended') return sendError(res, 403, 'Your membership is suspended');
+    if (member.status === 'suspended') {
+      return sendError(res, 403, 'Your membership is suspended — top up wallet and contact support');
+    }
 
+    // 2. Find active cycle
     const cycle = await prisma.stokvelCycle.findFirst({
       where: { groupId, status: 'collecting' },
     });
     if (!cycle) return sendError(res, 400, 'No active cycle to contribute to');
 
+    // 3. Check not already paid this cycle
     const existing = await prisma.stokvelContribution.findFirst({
       where: { cycleId: cycle.id, userId, type: 'contribution', status: 'paid' },
     });
     if (existing) return sendError(res, 409, 'You have already contributed this cycle');
 
+    // 4. Get tier amount and split
     const group = await prisma.stokvelGroup.findUnique({ where: { id: groupId } });
     const amount = getTierAmount(group.tier);
-    const { platformFee, backupFund, toPot } = splitContribution(amount);
+    const { platformFee, toPot } = splitContribution(amount);
 
+    // 5. Check wallet balance
     const account = await prisma.account.findUnique({ where: { userId } });
     if (!account || account.balance < amount) {
-      return sendError(res, 400, `Insufficient balance. Need R${amount / 100}, have R${(account?.balance || 0) / 100}`);
+      return sendError(res, 400,
+        `Insufficient balance. Need ${amount / 100}, have R${(account?.balance || 0) / 100}`
+      );
     }
 
+    // 6. Process contribution in a transaction
     await prisma.$transaction(async (tx) => {
-      await tx.account.update({ where: { userId }, data: { balance: { decrement: amount } } });
 
-      await tx.stokvelContribution.create({
-        data: { cycleId: cycle.id, groupId, userId, memberId: member.id, amount: toPot, type: 'contribution', status: 'paid', paidAt: new Date() },
+      // Deduct from wallet
+      await tx.account.update({
+        where: { userId },
+        data: { balance: { decrement: amount } },
       });
 
+      // Record contribution
+      await tx.stokvelContribution.create({
+        data: {
+          cycleId:  cycle.id,
+          groupId,
+          userId,
+          memberId: member.id,
+          amount:   toPot,
+          type:     'contribution',
+          status:   'paid',
+          paidAt:   new Date(),
+        },
+      });
+
+      // Add platform fee to escrow
       await tx.escrowAccount.update({
         where: { groupId },
-        data: { backupFund: { increment: backupFund }, platformFees: { increment: platformFee } },
+        data: { platformFees: { increment: platformFee } },
       });
 
-      const allPaid = await tx.stokvelContribution.count({
-        where: { cycleId: cycle.id, type: 'contribution', status: { in: ['paid', 'covered_by_backup'] } },
+      // 7. Check if all 3 members have paid
+      const paidCount = await tx.stokvelContribution.count({
+        where: {
+          cycleId: cycle.id,
+          type:    'contribution',
+          status:  { in: ['paid', 'covered_by_backup'] },
+        },
       });
 
-      if (allPaid >= 3) {
+      if (paidCount >= 3) {
         const totalPot = toPot * 3;
-        await tx.account.update({ where: { userId: cycle.recipientId }, data: { balance: { increment: totalPot } } });
-        await tx.stokvelCycle.update({ where: { id: cycle.id }, data: { status: 'paid', paidAt: new Date(), totalPot } });
+
+        // Pay out to recipient
+        await tx.account.update({
+          where: { userId: cycle.recipientId },
+          data:  { balance: { increment: totalPot } },
+        });
+
+        // Mark cycle as paid
+        await tx.stokvelCycle.update({
+          where: { id: cycle.id },
+          data:  { status: 'paid', paidAt: new Date(), totalPot },
+        });
 
         if (cycle.cycleNumber < 3) {
+          // Advance to next cycle
           await tx.stokvelCycle.updateMany({
             where: { groupId, cycleNumber: cycle.cycleNumber + 1 },
-            data: { status: 'collecting' },
+            data:  { status: 'collecting' },
           });
-          await tx.stokvelGroup.update({ where: { id: groupId }, data: { currentCycle: cycle.cycleNumber + 1 } });
+          await tx.stokvelGroup.update({
+            where: { id: groupId },
+            data:  { currentCycle: cycle.cycleNumber + 1 },
+          });
         } else {
-          await tx.stokvelGroup.update({ where: { id: groupId }, data: { status: 'completed' } });
+          // Final cycle — complete the group
+          await tx.stokvelGroup.update({
+            where: { id: groupId },
+            data:  { status: 'completed' },
+          });
         }
       }
     });
 
-    return sendSuccess(res, { contributed: amount, toPot, platformFee, backupFund }, 'Contribution successful');
+    return sendSuccess(res, {
+      contributed:  amount,
+      toPot,
+      platformFee,
+      message: `R${amount / 100} contributed. R${platformFee / 100} platform fee. R${toPot / 100} added to pot.`,
+    }, 'Contribution successful');
+
   } catch (err) { next(err); }
 }
 
