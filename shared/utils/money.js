@@ -8,50 +8,35 @@ const TIER_AMOUNTS = {
   3: 200000,  // R2,000 in cents
 };
 
+// Security deposit = full contribution amount
+// Must cover one full dropout pot share
 const SECURITY_DEPOSITS = {
-  1: 10000,   // R100 in cents
-  2: 20000,   // R200 in cents
-  3: 40000,   // R400 in cents
+  1: 50000,   // R500  — covers full dropout (R490 pot share + buffer)
+  2: 100000,  // R1,000
+  3: 200000,  // R2,000
 };
 
 const PLATFORM_FEE_PERCENT = 2;   // 2%  → platform revenue
 const TO_POT_PERCENT       = 98;  // 98% → recipient pot
 const LOYALTY_BONUS        = 5000; // R50 in cents — position 3 bonus
 
-/**
- * Split a contribution into platform fee and pot
- * Backup fund removed — security deposit covers dropout protection
- *
- * @param {number} amount - contribution in cents
- * @returns {{ platformFee, toPot }}
- */
 function splitContribution(amount) {
   const platformFee = Math.floor(amount * PLATFORM_FEE_PERCENT / 100);
   const toPot       = amount - platformFee;
   return { platformFee, toPot };
 }
 
-/**
- * Calculate total pot for a group (what recipient receives)
- * @param {number} tier - 1, 2, or 3
- * @returns {number} pot amount in cents
- */
 function calculatePot(tier) {
   const contribution = TIER_AMOUNTS[tier];
-  const { toPot } = splitContribution(contribution);
-  return toPot * 3; // 3 members
+  const { toPot }    = splitContribution(contribution);
+  return toPot * 3;
 }
 
-/**
- * Calculate net cost to member over full 3 cycles
- * @param {number} tier
- * @returns {{ totalContributed, totalReceived, netCost, platformFeeTotal }}
- */
 function calculateMemberSummary(tier) {
-  const contribution  = TIER_AMOUNTS[tier];
-  const deposit       = SECURITY_DEPOSITS[tier];
+  const contribution     = TIER_AMOUNTS[tier];
+  const deposit          = SECURITY_DEPOSITS[tier];
   const { platformFee, toPot } = splitContribution(contribution);
-  const pot           = toPot * 3;
+  const pot              = toPot * 3;
   const totalContributed = contribution * 3;
   const platformFeeTotal = platformFee * 3;
 
@@ -63,17 +48,12 @@ function calculateMemberSummary(tier) {
     toPotMonthly:        toPot,
     potReceived:         pot,
     totalContributed,
-    netCost:             totalContributed - pot, // = platformFeeTotal
+    netCost:             totalContributed - pot,
     firstMonthTotal:     contribution + deposit,
     subsequentMonths:    contribution,
   };
 }
 
-/**
- * Format cents to Rands string for display
- * @param {number} cents
- * @returns {string} e.g. "R1,470.00"
- */
 function formatRands(cents) {
   return `R${(cents / 100).toLocaleString('en-ZA', {
     minimumFractionDigits: 2,
@@ -81,11 +61,6 @@ function formatRands(cents) {
   })}`;
 }
 
-/**
- * Convert Rands to cents (for user input)
- * @param {number} rands
- * @returns {number} cents
- */
 function randsToCents(rands) {
   return Math.round(rands * 100);
 }
@@ -100,10 +75,6 @@ function getSecurityDeposit(tier) {
   return SECURITY_DEPOSITS[tier];
 }
 
-/**
- * Minimum wallet balance required to join a group
- * first contribution + security deposit (if required)
- */
 function getMinimumJoinBalance(tier, requiresDeposit = true) {
   const contribution = getTierAmount(tier);
   const deposit      = requiresDeposit ? getSecurityDeposit(tier) : 0;
