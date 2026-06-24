@@ -1,6 +1,8 @@
 const prisma = require('../../../../shared/config/database');
 const { sendSuccess, sendError } = require('../../../../shared/utils/response');
-const { getTierAmount, splitContribution } = require('../../../../shared/utils/money');
+const { getTierAmount, splitContribution, getSecurityDeposit } = require('../../../../shared/utils/money');
+const { publish } = require('../../../../shared/config/rabbitmq');
+const logger = require('../../../../shared/config/logger');
 
 async function getGroupCycles(req, res, next) {
   try {
@@ -44,13 +46,13 @@ async function contribute(req, res, next) {
     });
     if (!cycle) return sendError(res, 400, 'No active cycle to contribute to');
 
-    // 3. Check not already paid this cycle
+    // 3. Check not already paid
     const existing = await prisma.stokvelContribution.findFirst({
       where: { cycleId: cycle.id, userId, type: 'contribution', status: 'paid' },
     });
     if (existing) return sendError(res, 409, 'You have already contributed this cycle');
 
-    // 4. Get tier amount and split
+    // 4. Get amounts
     const group = await prisma.stokvelGroup.findUnique({ where: { id: groupId } });
     const amount = getTierAmount(group.tier);
     const { platformFee, toPot } = splitContribution(amount);
@@ -59,17 +61,17 @@ async function contribute(req, res, next) {
     const account = await prisma.account.findUnique({ where: { userId } });
     if (!account || account.balance < amount) {
       return sendError(res, 400,
-        `Insufficient balance. Need ${amount / 100}, have R${(account?.balance || 0) / 100}`
+        `Insufficient balance. Need R${amount / 100}, have R${(account?.balance || 0) / 100}`
       );
     }
 
-    // 6. Process contribution in a transaction
+    // 6. Process in transaction
     await prisma.$transaction(async (tx) => {
 
       // Deduct from wallet
       await tx.account.update({
         where: { userId },
-        data: { balance: { decrement: amount } },
+        data:  { balance: { decrement: amount } },
       });
 
       // Record contribution
@@ -89,10 +91,10 @@ async function contribute(req, res, next) {
       // Add platform fee to escrow
       await tx.escrowAccount.update({
         where: { groupId },
-        data: { platformFees: { increment: platformFee } },
+        data:  { platformFees: { increment: platformFee } },
       });
 
-      // 7. Check if all 3 members have paid
+      // 7. Check if all 3 paid
       const paidCount = await tx.stokvelContribution.count({
         where: {
           cycleId: cycle.id,
@@ -110,11 +112,13 @@ async function contribute(req, res, next) {
           data:  { balance: { increment: totalPot } },
         });
 
-        // Mark cycle as paid
+        // Mark cycle paid
         await tx.stokvelCycle.update({
           where: { id: cycle.id },
           data:  { status: 'paid', paidAt: new Date(), totalPot },
         });
+
+        logger.info(`Cycle ${cycle.cycleNumber} paid out R${totalPot / 100} to ${cycle.recipientId}`);
 
         if (cycle.cycleNumber < 3) {
           // Advance to next cycle
@@ -126,24 +130,83 @@ async function contribute(req, res, next) {
             where: { id: groupId },
             data:  { currentCycle: cycle.cycleNumber + 1 },
           });
+
+          publish('stokvel.cycle.paid', {
+            groupId,
+            cycleNumber: cycle.cycleNumber,
+            recipientId: cycle.recipientId,
+            amount:      totalPot,
+            nextCycle:   cycle.cycleNumber + 1,
+          }).catch(() => {});
+
         } else {
-          // Final cycle — complete the group
-          await tx.stokvelGroup.update({
-            where: { id: groupId },
-            data:  { status: 'completed' },
-          });
+          // Final cycle — complete group and return deposits
+          await _completeGroup(tx, groupId, group.tier);
         }
       }
     });
 
     return sendSuccess(res, {
-      contributed:  amount,
+      contributed: amount,
       toPot,
       platformFee,
       message: `R${amount / 100} contributed. R${platformFee / 100} platform fee. R${toPot / 100} added to pot.`,
     }, 'Contribution successful');
 
   } catch (err) { next(err); }
+}
+
+// ── Complete group — return security deposits ─────────────────────────────────
+async function _completeGroup(tx, groupId, tier) {
+  const depositAmount = getSecurityDeposit(tier);
+
+  // Get all active/completed members
+  const members = await tx.stokvelMember.findMany({
+    where: { groupId, status: { in: ['active', 'completed'] } },
+  });
+
+  let totalReturned = 0;
+
+  for (const member of members) {
+    // Return security deposit to wallet
+    await tx.account.update({
+      where: { userId: member.userId },
+      data:  { balance: { increment: depositAmount } },
+    });
+
+    // Mark member as completed
+    await tx.stokvelMember.update({
+      where: { id: member.id },
+      data:  { status: 'completed' },
+    });
+
+    totalReturned += depositAmount;
+    logger.info(`Security deposit R${depositAmount / 100} returned to ${member.userId}`);
+  }
+
+  // Mark escrow as released
+  await tx.escrowAccount.update({
+    where: { groupId },
+    data:  {
+      securityFund: 0,
+      released:     true,
+    },
+  });
+
+  // Mark group as completed
+  await tx.stokvelGroup.update({
+    where: { id: groupId },
+    data:  { status: 'completed' },
+  });
+
+  logger.info(`Group ${groupId} completed. R${totalReturned / 100} security deposits returned.`);
+
+  publish('stokvel.group.completed', {
+    groupId,
+    tier,
+    memberIds:      members.map(m => m.userId),
+    depositReturned: depositAmount,
+  }).catch(() => {});
 }
 
 module.exports = { getGroupCycles, getCurrentCycle, contribute };
