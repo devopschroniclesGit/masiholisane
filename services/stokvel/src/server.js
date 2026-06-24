@@ -11,6 +11,7 @@ const poolRoutes    = require('./routes/pool.routes');
 const stokvelRoutes = require('./routes/stokvel.routes');
 const cycleRoutes   = require('./routes/cycle.routes');
 const adminRoutes   = require('./routes/admin.routes');
+const authRoutes    = require('./routes/auth.routes');
 const cycleJob      = require('./jobs/cycle.job');
 
 const app  = express();
@@ -34,6 +35,7 @@ app.use('/api/v1/stokvels', poolRoutes);
 app.use('/api/v1/stokvels', stokvelRoutes);
 app.use('/api/v1/stokvels', cycleRoutes);
 app.use('/api/v1/stokvels/admin', adminRoutes);
+app.use('/api/v1/auth', authRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, message: `Route not found: ${req.method} ${req.path}` });
