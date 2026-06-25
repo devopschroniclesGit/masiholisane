@@ -3,6 +3,7 @@ const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const prisma   = require('../../../../shared/config/database');
 const { sendSuccess, sendError } = require('../../../../shared/utils/response');
+const { authenticate } = require('../../../../shared/middleware/auth');
 
 const router = express.Router();
 
@@ -36,3 +37,25 @@ router.post('/login', async (req, res, next) => {
 });
 
 module.exports = router;
+
+// GET /me — return current user profile with Trust Score
+router.get('/me', authenticate, async (req, res, next) => {
+  try {
+    const prisma = require('../../../../shared/config/database');
+    const user   = await prisma.user.findUnique({
+      where:   { id: req.user.id },
+      select:  { id: true, name: true, email: true, verified: true, createdAt: true },
+    });
+    const trust = await prisma.trustScore.findUnique({
+      where: { userId: req.user.id },
+    });
+    return res.json({
+      success: true,
+      data: {
+        ...user,
+        trustScore: trust?.score || 0,
+        trustTier:  trust?.tier  || 'restricted',
+      },
+    });
+  } catch (err) { next(err); }
+});
