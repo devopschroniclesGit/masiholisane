@@ -6,10 +6,8 @@ import Card from '../components/Card';
 import Button from '../components/Button';
 import Countdown from '../components/Countdown';
 
-
-// Generate anonymous member code from userId
-// e.g. MSH-2847 or MSH-284*** (you)
 function memberCode(userId, isYou) {
+  if (!userId) return 'MSH-????';
   const hash = userId.replace(/-/g, '').slice(0, 8).toUpperCase();
   const num  = parseInt(hash, 16) % 9000 + 1000;
   const code = 'MSH-' + num;
@@ -17,14 +15,14 @@ function memberCode(userId, isYou) {
 }
 
 export default function GroupDetail() {
-  const { id }          = useParams();
-  const { user }        = useAuth();
-  const navigate        = useNavigate();
-  const [group, setGroup]       = useState(null);
-  const [loading, setLoading]   = useState(true);
+  const { id }        = useParams();
+  const { user }      = useAuth();
+  const navigate      = useNavigate();
+  const [group, setGroup]             = useState(null);
+  const [loading, setLoading]         = useState(true);
   const [contributing, setContributing] = useState(false);
-  const [message, setMessage]   = useState('');
-  const [error, setError]       = useState('');
+  const [message, setMessage]         = useState('');
+  const [error, setError]             = useState('');
 
   function loadGroup() {
     stokvelAPI.getGroup(id)
@@ -58,13 +56,13 @@ export default function GroupDetail() {
 
   if (!group) return null;
 
-  const myMembership  = group.members?.find(m => m.userId === user?.id);
-  const currentCycle  = group.cycles?.find(c => c.status === 'collecting');
-  const tierAmounts   = { 1: 500, 2: 1000, 3: 2000 };
-  const potAmounts    = { 1: 1470, 2: 2940, 3: 5880 };
-  const tierLabels    = { 1: 'Starter', 2: 'Builder', 3: 'Wealth' };
+  const myMembership = group.members?.find(m => m.userId === user?.id);
+  const currentCycle = group.cycles?.find(c => c.status === 'collecting');
+  const tierAmounts  = { 1: 500,  2: 1000, 3: 2000 };
+  const potAmounts   = { 1: 1470, 2: 2940, 3: 5880 };
+  const tierLabels   = { 1: 'Starter', 2: 'Builder', 3: 'Wealth' };
 
-  const alreadyPaidThisCycle = currentCycle?.contributions?.some(
+  const alreadyPaid = currentCycle?.contributions?.some(
     c => c.userId === user?.id && c.status === 'paid'
   );
 
@@ -124,9 +122,7 @@ export default function GroupDetail() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <p className="text-xs text-gray-500">Cycle {currentCycle.cycleNumber} of 3</p>
-              <p className="font-bold text-lg" style={{ color: '#1B2F5E' }}>
-                Contribution Due
-              </p>
+              <p className="font-bold text-lg" style={{ color: '#1B2F5E' }}>Contribution Due</p>
               <p className="text-sm text-gray-500">
                 {new Date(currentCycle.dueDate).toLocaleDateString('en-ZA', {
                   weekday: 'long', day: 'numeric', month: 'long'
@@ -144,17 +140,12 @@ export default function GroupDetail() {
             </span>
           </div>
 
-          {alreadyPaidThisCycle ? (
+          {alreadyPaid ? (
             <div className="p-3 rounded-xl text-center bg-green-50 border border-green-200">
               <p className="text-sm font-medium text-green-700">✓ You have paid this cycle</p>
             </div>
           ) : (
-            <Button
-              variant="green"
-              className="w-full py-3"
-              loading={contributing}
-              onClick={handleContribute}
-            >
+            <Button variant="green" className="w-full py-3" loading={contributing} onClick={handleContribute}>
               Pay R{tierAmounts[group.tier].toLocaleString()} Now
             </Button>
           )}
@@ -165,34 +156,33 @@ export default function GroupDetail() {
       <Card>
         <h3 className="font-bold mb-3" style={{ color: '#1B2F5E' }}>Members</h3>
         <div className="flex flex-col gap-2">
-          {group.members?.map(member => (
-            <div key={member.id}
-                 className="flex items-center justify-between p-3 rounded-xl"
-                 style={{
-                   backgroundColor: member.userId === user?.id ? '#EAF0FB' : '#F5F7FA'
-                 }}>
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold"
-                  style={{ backgroundColor: '#1B2F5E' }}
-                >
-                  "M"
+          {group.members?.map(member => {
+            const isMe = member.userId === user?.id;
+            return (
+              <div key={member.id}
+                   className="flex items-center justify-between p-3 rounded-xl"
+                   style={{ backgroundColor: isMe ? '#EAF0FB' : '#F5F7FA' }}>
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold"
+                    style={{ backgroundColor: '#1B2F5E' }}
+                  >
+                    M
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">
+                      {memberCode(member.userId, isMe)}
+                    </p>
+                    <p className="text-xs text-gray-400">Position {member.position}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-800">
-                    {memberCode(member.userId, member.userId === user?.id)}
-                  </p>
-                  <p className="text-xs text-gray-400">Position {member.position}</p>
-                </div>
-              </div>
-              <div className="text-right">
                 <span
                   className="text-xs font-semibold px-2 py-0.5 rounded-full"
                   style={{
-                    backgroundColor: member.status === 'active' ? '#dcfce7' :
+                    backgroundColor: member.status === 'active'    ? '#dcfce7' :
                                      member.status === 'suspended' ? '#fef9c3' :
                                      member.status === 'completed' ? '#dbeafe' : '#fee2e2',
-                    color: member.status === 'active' ? '#3A8B2F' :
+                    color: member.status === 'active'    ? '#3A8B2F' :
                            member.status === 'suspended' ? '#92400e' :
                            member.status === 'completed' ? '#1B2F5E' : '#dc2626',
                   }}
@@ -200,8 +190,8 @@ export default function GroupDetail() {
                   {member.status}
                 </span>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </Card>
 
@@ -212,7 +202,6 @@ export default function GroupDetail() {
           {group.cycles?.map(cycle => {
             const isRecipient = cycle.recipientId === user?.id;
             const recipient   = group.members?.find(m => m.userId === cycle.recipientId);
-
             return (
               <div key={cycle.id}
                    className="flex items-center gap-4 p-3 rounded-xl"
@@ -223,7 +212,7 @@ export default function GroupDetail() {
                 <div
                   className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
                   style={{
-                    backgroundColor: cycle.status === 'paid' ? '#3A8B2F' :
+                    backgroundColor: cycle.status === 'paid'       ? '#3A8B2F' :
                                      cycle.status === 'collecting' ? '#E8621A' : '#9ca3af'
                   }}
                 >
@@ -264,7 +253,7 @@ export default function GroupDetail() {
         </div>
       </Card>
 
-      {/* Escrow Info */}
+      {/* Escrow */}
       {group.escrow && (
         <Card>
           <h3 className="font-bold mb-3" style={{ color: '#1B2F5E' }}>Security & Escrow</h3>
