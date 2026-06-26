@@ -260,3 +260,17 @@ model EscrowTransaction {
   @@index([userId])
   @@index([type])
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Admin {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("admin") // admin | superadmin
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

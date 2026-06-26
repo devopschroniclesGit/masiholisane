@@ -12,6 +12,9 @@ const stokvelRoutes = require('./routes/stokvel.routes');
 const cycleRoutes   = require('./routes/cycle.routes');
 const adminRoutes   = require('./routes/admin.routes');
 const authRoutes    = require('./routes/auth.routes');
+const walletRoutes      = require('./routes/wallet.routes');
+const { router: adminAuthRoutes } = require('./routes/admin-auth.routes');
+const adminDashRoutes = require('./routes/admin-dashboard.routes');
 const cycleJob      = require('./jobs/cycle.job');
 
 const app  = express();
@@ -46,6 +49,9 @@ app.get('/api/v1/health', (req, res) => {
 });
 
 app.use('/api/v1/auth',             authRoutes);
+app.use('/api/v1/wallet',           walletRoutes);
+app.use('/api/v1/admin/auth',       adminAuthRoutes);
+app.use('/api/v1/admin/dashboard',  adminDashRoutes);
 app.use('/api/v1/stokvels',         poolRoutes);
 app.use('/api/v1/stokvels',         stokvelRoutes);
 app.use('/api/v1/stokvels',         cycleRoutes);
