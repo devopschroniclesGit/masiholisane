@@ -6,5 +6,6 @@ const router = express.Router();
 
 router.get('/balance',          authenticate, walletController.getBalance);
 router.get('/transactions',     authenticate, walletController.getTransactions);
+router.post('/withdraw',        authenticate, walletController.withdraw);
 
 module.exports = router;

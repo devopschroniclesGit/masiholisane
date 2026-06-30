@@ -5,14 +5,9 @@ import { stokvelAPI } from '../services/api';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import Countdown from '../components/Countdown';
+import AlertModal from '../components/AlertModal';
+import TrustScoreModal from '../components/TrustScoreModal';
 
-function memberCode(userId, isYou) {
-  if (!userId) return 'MSH-????';
-  const hash = userId.replace(/-/g, '').slice(0, 8).toUpperCase();
-  const num  = parseInt(hash, 16) % 9000 + 1000;
-  const code = 'MSH-' + num;
-  return isYou ? code + ' (you)' : code.slice(0, -2) + '**';
-}
 
 export default function GroupDetail() {
   const { id }        = useParams();
@@ -23,6 +18,7 @@ export default function GroupDetail() {
   const [contributing, setContributing] = useState(false);
   const [message, setMessage]         = useState('');
   const [error, setError]             = useState('');
+  const [trustReward, setTrustReward] = useState(null);
 
   function loadGroup() {
     stokvelAPI.getGroup(id)
@@ -38,8 +34,26 @@ export default function GroupDetail() {
     setError('');
     setMessage('');
     try {
+      const oldScore = user?.trustScore || 0;
+      const oldTier  = user?.trustTier  || 'restricted';
       const res = await stokvelAPI.contribute(id);
-      setMessage(res.data.data.message || 'Contribution successful');
+      const { trustScore, trustTier } = res.data.data;
+
+      // Show trust reward if score increased
+      if (trustScore && trustScore > oldScore) {
+        setTrustReward({
+          oldScore,
+          newScore: trustScore,
+          oldTier,
+          newTier:  trustTier,
+          delta:    trustScore - oldScore,
+        });
+        // Update local user state
+        const updated = { ...user, trustScore, trustTier };
+        localStorage.setItem('user', JSON.stringify(updated));
+      } else {
+        setMessage(res.data.data.message || 'Contribution successful');
+      }
       loadGroup();
     } catch (err) {
       setError(err.response?.data?.message || 'Contribution failed');
@@ -59,7 +73,7 @@ export default function GroupDetail() {
   const myMembership = group.members?.find(m => m.userId === user?.id);
   const currentCycle = group.cycles?.find(c => c.status === 'collecting');
   const tierAmounts  = { 1: 500,  2: 1000, 3: 2000 };
-  const potAmounts   = { 1: 1470, 2: 2940, 3: 5880 };
+  const potAmounts   = { 1: 1000, 2: 2000, 3: 4000 };
   const tierLabels   = { 1: 'Starter', 2: 'Builder', 3: 'Wealth' };
 
   const alreadyPaid = currentCycle?.contributions?.some(
@@ -84,7 +98,7 @@ export default function GroupDetail() {
         </button>
         <div>
           <h1 className="text-xl font-bold" style={{ color: '#1B2F5E' }}>
-            Tier {group.tier} — {tierLabels[group.tier]}
+            Tier {group.tier} {tierLabels[group.tier]}
           </h1>
           <span
             className="text-xs font-semibold px-2 py-0.5 rounded-full text-white"
@@ -95,17 +109,30 @@ export default function GroupDetail() {
         </div>
       </div>
 
-      {/* Messages */}
-      {message && (
-        <div className="p-3 rounded-xl text-sm font-medium bg-green-50 border border-green-200 text-green-700">
-          ✓ {message}
-        </div>
-      )}
-      {error && (
-        <div className="p-3 rounded-xl text-sm bg-red-50 border border-red-200 text-red-700">
-          {error}
-        </div>
-      )}
+      {/* Modals */}
+      <AlertModal
+        open={!!message}
+        onClose={() => setMessage('')}
+        variant="success"
+        title="Contribution Successful"
+        message={message}
+      />
+      <AlertModal
+        open={!!error}
+        onClose={() => setError('')}
+        variant="error"
+        message={error}
+      />
+
+      <TrustScoreModal
+        open={!!trustReward}
+        onClose={() => setTrustReward(null)}
+        oldScore={trustReward?.oldScore}
+        newScore={trustReward?.newScore}
+        oldTier={trustReward?.oldTier}
+        newTier={trustReward?.newTier}
+        delta={trustReward?.delta}
+      />
 
       {/* Suspended warning */}
       {myMembership?.status === 'suspended' && (
@@ -122,7 +149,9 @@ export default function GroupDetail() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <p className="text-xs text-gray-500">Cycle {currentCycle.cycleNumber} of 3</p>
-              <p className="font-bold text-lg" style={{ color: '#1B2F5E' }}>Contribution Due</p>
+              <p className="font-bold text-lg" style={{ color: '#1B2F5E' }}>
+                {currentCycle.recipientId === user?.id ? 'You Receive This Cycle' : 'Contribution Due'}
+              </p>
               <p className="text-sm text-gray-500">
                 {new Date(currentCycle.dueDate).toLocaleDateString('en-ZA', {
                   weekday: 'long', day: 'numeric', month: 'long'
@@ -132,22 +161,43 @@ export default function GroupDetail() {
             <Countdown targetDate={currentCycle.dueDate} label="days left" />
           </div>
 
-          <div className="flex items-center justify-between p-3 rounded-xl mb-4"
-               style={{ backgroundColor: '#F5F7FA' }}>
-            <span className="text-sm text-gray-600">Amount due</span>
-            <span className="font-bold text-lg" style={{ color: '#1B2F5E' }}>
-              R{tierAmounts[group.tier].toLocaleString()}
-            </span>
-          </div>
-
-          {alreadyPaid ? (
-            <div className="p-3 rounded-xl text-center bg-green-50 border border-green-200">
-              <p className="text-sm font-medium text-green-700">✓ You have paid this cycle</p>
-            </div>
+          {currentCycle.recipientId === user?.id ? (
+            <>
+              <div className="flex items-center justify-between p-3 rounded-xl mb-4"
+                   style={{ backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                <span className="text-sm text-gray-600">Your incoming payout</span>
+                <span className="font-bold text-lg" style={{ color: '#3A8B2F' }}>
+                  R{potAmounts[group.tier].toLocaleString()}
+                </span>
+              </div>
+              <button disabled
+                className="w-full py-3 rounded-xl text-sm font-semibold text-gray-400 bg-gray-100 cursor-not-allowed">
+                Awaiting other members
+              </button>
+              <p className="text-xs text-gray-400 text-center mt-2">
+                Your payout lands automatically when both other members pay
+              </p>
+            </>
           ) : (
-            <Button variant="green" className="w-full py-3" loading={contributing} onClick={handleContribute}>
-              Pay R{tierAmounts[group.tier].toLocaleString()} Now
-            </Button>
+            <>
+              <div className="flex items-center justify-between p-3 rounded-xl mb-4"
+                   style={{ backgroundColor: '#F5F7FA' }}>
+                <span className="text-sm text-gray-600">Amount due</span>
+                <span className="font-bold text-lg" style={{ color: '#1B2F5E' }}>
+                  R{tierAmounts[group.tier].toLocaleString()}
+                </span>
+              </div>
+
+              {alreadyPaid ? (
+                <div className="p-3 rounded-xl text-center bg-green-50 border border-green-200">
+                  <p className="text-sm font-medium text-green-700">✓ You have paid this cycle</p>
+                </div>
+              ) : (
+                <Button variant="green" className="w-full py-3" loading={contributing} onClick={handleContribute}>
+                  Pay R{tierAmounts[group.tier].toLocaleString()} Now
+                </Button>
+              )}
+            </>
           )}
         </Card>
       )}
@@ -171,7 +221,8 @@ export default function GroupDetail() {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-gray-800">
-                      {memberCode(member.userId, isMe)}
+                      {member.user?.name || 'Member'}
+                      {isMe && <span className="ml-1 text-xs" style={{ color: '#E8621A' }}>(you)</span>}
                     </p>
                     <p className="text-xs text-gray-400">Position {member.position}</p>
                   </div>
@@ -220,7 +271,8 @@ export default function GroupDetail() {
                 </div>
                 <div className="flex-1">
                   <p className="text-sm font-medium text-gray-800">
-                    {memberCode(recipient?.userId, isRecipient)}
+                    {recipient?.user?.name || 'Unknown'}
+                    {isRecipient && <span className="ml-1 text-xs" style={{ color: '#E8621A' }}>(you)</span>}
                   </p>
                   <p className="text-xs text-gray-400">
                     {new Date(cycle.dueDate).toLocaleDateString('en-ZA', {
@@ -253,28 +305,6 @@ export default function GroupDetail() {
         </div>
       </Card>
 
-      {/* Escrow */}
-      {group.escrow && (
-        <Card>
-          <h3 className="font-bold mb-3" style={{ color: '#1B2F5E' }}>Security & Escrow</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 rounded-xl" style={{ backgroundColor: '#F5F7FA' }}>
-              <p className="text-xs text-gray-500">Security Fund</p>
-              <p className="font-bold" style={{ color: '#1B2F5E' }}>
-                R{(group.escrow.securityFund / 100).toLocaleString()}
-              </p>
-              <p className="text-xs text-gray-400">returned on completion</p>
-            </div>
-            <div className="p-3 rounded-xl" style={{ backgroundColor: '#F5F7FA' }}>
-              <p className="text-xs text-gray-500">Platform Fees</p>
-              <p className="font-bold" style={{ color: '#E8621A' }}>
-                R{(group.escrow.platformFees / 100).toLocaleString()}
-              </p>
-              <p className="text-xs text-gray-400">service charge</p>
-            </div>
-          </div>
-        </Card>
-      )}
     </div>
   );
 }

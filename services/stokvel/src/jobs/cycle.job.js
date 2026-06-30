@@ -10,17 +10,17 @@ let processJob = null;
 let expireJob  = null;
 
 function start() {
-  // Daily 08:00 — warn members with low balance
+  // Daily 08:00 warn members with low balance
   warningJob = cron.schedule('0 8 * * *', checkAndWarn, {
     timezone: 'Africa/Johannesburg',
   });
 
-  // Daily 09:00 — process contributions on cycle day
+  // Daily 09:00 process contributions on cycle day
   processJob = cron.schedule('0 9 * * *', processContributions, {
     timezone: 'Africa/Johannesburg',
   });
 
-  // Daily 10:00 — cancel expired forming groups
+  // Daily 10:00 cancel expired forming groups
   expireJob = cron.schedule('0 10 * * *', cancelExpiredGroups, {
     timezone: 'Africa/Johannesburg',
   });
@@ -62,7 +62,7 @@ async function checkAndWarn() {
 
         if (!account || account.balance < required) {
           const daysLeft = Math.ceil((new Date(cycle.dueDate) - now) / (1000 * 60 * 60 * 24));
-          logger.warn(`Low balance warning: member ${member.userId} — ${daysLeft} days until cycle`);
+          logger.warn(`Low balance warning: member ${member.userId} ${daysLeft} days until cycle`);
 
           publish('stokvel.contribution.warning', {
             userId:      member.userId,
@@ -153,7 +153,7 @@ async function _processCycleContributions(cycle) {
         });
 
       } else {
-        // Insufficient balance — handle dropout
+        // Insufficient balance handle dropout
         suspendedCount++;
         const result = await handleDropout(
           tx,
@@ -164,7 +164,7 @@ async function _processCycleContributions(cycle) {
         );
 
         if (!result.covered) {
-          logger.error(`Group ${cycle.groupId} suspended — cannot cover dropout`);
+          logger.error(`Group ${cycle.groupId} suspended cannot cover dropout`);
           return; // Stop processing
         }
       }

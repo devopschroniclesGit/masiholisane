@@ -71,13 +71,12 @@ async function joinPool(req, res, next) {
     const account    = await prisma.account.findUnique({ where: { userId } });
     if (!account) return sendError(res, 404, 'Wallet not found');
 
-    const trustScore     = await prisma.trustScore.findUnique({ where: { userId } });
-    const requireDeposit = !trustScore || trustScore.score < 70;
-    const minBalance     = getMinimumJoinBalance(tierInt, requireDeposit);
+    const trustScore = await prisma.trustScore.findUnique({ where: { userId } });
+    const tierAmount = getTierAmount(tierInt);
 
-    if (account.balance < minBalance) {
-      const needed = minBalance - account.balance;
-      return sendError(res, 400, `Insufficient balance. You need R${(needed / 100).toFixed(2)} more to join.`);
+    if (account.balance < tierAmount) {
+      const needed = tierAmount - account.balance;
+      return sendError(res, 400, `You need R${(needed / 100).toFixed(2)} more in your wallet to join Tier ${tierInt}. Joining locks in your first cycle contribution of R${(tierAmount / 100).toFixed(2)}.`);
     }
 
     const minScoreForTier = { 1: 30, 2: 50, 3: 70 };
@@ -119,8 +118,109 @@ async function joinPool(req, res, next) {
         data: { groupId: group.id, userId, position: assignedPosition, status: 'active' },
       });
 
+      // ── RESERVATION: Deduct first cycle contribution immediately ─────────
+      // Re-check balance inside transaction to prevent race conditions
+      const currentAccount = await tx.account.findUnique({ where: { userId } });
+      if (currentAccount.balance < tierAmount) {
+        throw new Error(`Insufficient balance. You may already be committed to another group. Need R${tierAmount/100}, have R${currentAccount.balance/100}`);
+      }
+
+      await tx.account.update({
+        where: { userId },
+        data:  { balance: { decrement: tierAmount } },
+      });
+
+      // Record the reservation transaction
+      await tx.transaction.create({
+        data: {
+          fromAccountId:  currentAccount.id,
+          amount:         tierAmount,
+          type:           'contribution',
+          status:         'completed',
+          idempotencyKey: `reserve-${group.id}-${userId}`,
+          description:    `Tier ${tierInt} reservation locked in (first cycle contribution)`,
+        },
+      });
+
       if (isLastMember) {
         await _activateGroup(tx, group.id, tierInt);
+        const allMembers = await tx.stokvelMember.findMany({ where: { groupId: group.id } });
+        const cycle1     = await tx.stokvelCycle.findFirst({
+          where: { groupId: group.id, cycleNumber: 1 },
+        });
+
+        // Refund the Cycle 1 recipient — they should not have contributed to their own cycle
+        const recipientAcct = await tx.account.findUnique({ where: { userId: cycle1.recipientId } });
+        if (recipientAcct) {
+          await tx.account.update({
+            where: { userId: cycle1.recipientId },
+            data:  { balance: { increment: tierAmount } },
+          });
+          await tx.transaction.create({
+            data: {
+              toAccountId:    recipientAcct.id,
+              amount:         tierAmount,
+              type:           'refund',
+              status:         'completed',
+              idempotencyKey: `recipient-refund-${cycle1.id}-${cycle1.recipientId}`,
+              description:    `Reservation refunded — you are Cycle 1 recipient`,
+            },
+          });
+        }
+
+        // Create Cycle 1 contributions for non-recipient members
+        for (const m of allMembers) {
+          if (m.userId === cycle1.recipientId) continue;
+          await tx.stokvelContribution.create({
+            data: {
+              cycleId:  cycle1.id,
+              groupId:  group.id,
+              userId:   m.userId,
+              memberId: m.id,
+              amount:   tierAmount,
+              type:     'contribution',
+              status:   'paid',
+              paidAt:   new Date(),
+            },
+          });
+        }
+        // Trigger payout to recipient since both contributions exist now
+        const paidCount = await tx.stokvelContribution.count({
+          where: { cycleId: cycle1.id, type: 'contribution', status: 'paid' },
+        });
+        if (paidCount >= 2) {
+          const totalPot = tierAmount * 2;
+          const recipientAccount = await tx.account.findUnique({ where: { userId: cycle1.recipientId } });
+          if (recipientAccount) {
+            await tx.account.update({
+              where: { userId: cycle1.recipientId },
+              data:  { balance: { increment: totalPot } },
+            });
+            await tx.transaction.create({
+              data: {
+                toAccountId:    recipientAccount.id,
+                amount:         totalPot,
+                type:           'payout',
+                status:         'completed',
+                idempotencyKey: `payout-${cycle1.id}-${Date.now()}`,
+                description:    `Stokvel payout — Tier ${tierInt} cycle 1`,
+              },
+            });
+          }
+          await tx.stokvelCycle.update({
+            where: { id: cycle1.id },
+            data:  { status: 'paid', paidAt: new Date(), totalPot },
+          });
+          // Move to cycle 2
+          await tx.stokvelCycle.updateMany({
+            where: { groupId: group.id, cycleNumber: 2 },
+            data:  { status: 'collecting' },
+          });
+          await tx.stokvelGroup.update({
+            where: { id: group.id },
+            data:  { currentCycle: 2 },
+          });
+        }
       }
 
       return { group, member, groupFull: isLastMember, updatedCount };
@@ -150,13 +250,79 @@ async function leavePool(req, res, next) {
     const userId      = req.user.id;
 
     const membership = await prisma.stokvelMember.findFirst({
-      where: { groupId, userId },
+      where:   { groupId, userId },
       include: { group: true },
     });
 
     if (!membership) return sendError(res, 404, 'You are not a member of this group');
     if (membership.group.status !== 'forming') {
       return sendError(res, 400, 'Cannot leave a group that has already started');
+    }
+
+    // Calculate cancellation fee
+    const CANCEL_FEES        = { 1: 2500, 2: 5000, 3: 10000 }; // in cents
+    const FREE_CANCEL_MS     = 60 * 60 * 1000; // 1 hour
+    const elapsedMs          = Date.now() - new Date(membership.joinedAt).getTime();
+    const feeApplies         = elapsedMs > FREE_CANCEL_MS;
+    const feeAmount          = feeApplies ? CANCEL_FEES[membership.group.tier] : 0;
+
+    // Deduct fee from wallet if applicable
+    if (feeAmount > 0) {
+      const account = await prisma.account.findUnique({ where: { userId } });
+      if (!account || account.balance < feeAmount) {
+        return sendError(res, 400, `Insufficient balance for R${feeAmount/100} cancellation fee`);
+      }
+
+      await prisma.$transaction([
+        prisma.account.update({
+          where: { userId },
+          data:  { balance: { decrement: feeAmount } },
+        }),
+        prisma.transaction.create({
+          data: {
+            fromAccountId:  account.id,
+            amount:         feeAmount,
+            type:           'fee',
+            status:         'completed',
+            idempotencyKey: `cancel-fee-${membership.id}-${Date.now()}`,
+            description:    `Cancellation fee Tier ${membership.group.tier} pool`,
+          },
+        }),
+      ]);
+
+      // Add fee to platform fees in escrow if it exists
+      const escrow = await prisma.escrowAccount.findUnique({ where: { groupId } });
+      if (escrow) {
+        await prisma.escrowAccount.update({
+          where: { groupId },
+          data:  { platformFees: { increment: feeAmount } },
+        });
+      }
+    }
+
+    // Refund the reservation amount (first cycle contribution)
+    const { getTierAmount } = require('../../../../shared/utils/money');
+    const tierAmount = getTierAmount(membership.group.tier);
+    const account    = await prisma.account.findUnique({ where: { userId } });
+    const refundAmount = tierAmount - feeAmount;
+
+    if (refundAmount > 0 && account) {
+      await prisma.account.update({
+        where: { userId },
+        data:  { balance: { increment: refundAmount } },
+      });
+      await prisma.transaction.create({
+        data: {
+          toAccountId:    account.id,
+          amount:         refundAmount,
+          type:           'refund',
+          status:         'completed',
+          idempotencyKey: `leave-refund-${membership.id}-${Date.now()}`,
+          description:    feeApplies
+            ? `Reservation refunded (less R${feeAmount/100} cancellation fee)`
+            : `Reservation refunded — left pool`,
+        },
+      });
     }
 
     await prisma.stokvelMember.delete({ where: { id: membership.id } });
@@ -166,7 +332,11 @@ async function leavePool(req, res, next) {
       await prisma.stokvelGroup.delete({ where: { id: groupId } });
     }
 
-    return sendSuccess(res, null, 'You have left the pool');
+    const message = feeApplies
+      ? `Left pool. R${refundAmount/100} refunded, R${feeAmount/100} cancellation fee charged.`
+      : `Left pool. R${refundAmount/100} refunded to your wallet.`;
+
+    return sendSuccess(res, { feeCharged: feeAmount }, message);
   } catch (err) { next(err); }
 }
 
@@ -226,9 +396,6 @@ async function _activateGroup(tx, groupId, tier) {
     data:  { status: 'active', currentCycle: 1 },
   });
 
-  // Collect security deposits
-  await _collectSecurityDeposits(tx, groupId, tier, members);
-
   logger.info(`Group ${groupId} activated`);
 
   publish('stokvel.group.started', {
@@ -278,4 +445,52 @@ async function _collectSecurityDeposits(tx, groupId, tier, members) {
   });
 }
 
-module.exports = { getPoolStatus, joinPool, leavePool };
+
+// ── GET /pool-waiting/my status of user's forming group ────────────────────
+async function getMyWaitingStatus(req, res, next) {
+  try {
+    const userId = req.user.id;
+
+    // Find a forming group the user is in
+    const membership = await prisma.stokvelMember.findFirst({
+      where: {
+        userId,
+        status: 'active',
+        group:  { status: 'forming' },
+      },
+      include: {
+        group: { include: { members: true } },
+      },
+    });
+
+    if (!membership) {
+      return sendSuccess(res, { waiting: false });
+    }
+
+    const group          = membership.group;
+    const currentMembers = group.members?.length || 0;
+    const spotsRemaining = 3 - currentMembers;
+    const progressPct    = Math.round((currentMembers / 3) * 100);
+
+    // Time since group started forming
+    const createdAt   = new Date(group.createdAt);
+    const hoursWaiting = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60));
+    const expiresAt   = new Date(group.expiresAt);
+    const hoursLeft   = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60)));
+
+    return sendSuccess(res, {
+      waiting:         true,
+      groupId:         group.id,
+      tier:            group.tier,
+      currentMembers,
+      spotsRemaining,
+      progressPct,
+      yourPosition:    membership.position === 99 ? currentMembers : membership.position,
+      hoursWaiting,
+      hoursLeft,
+      expiresAt:       group.expiresAt,
+    });
+  } catch (err) { next(err); }
+}
+
+module.exports = { getPoolStatus, joinPool, leavePool, getMyWaitingStatus };

@@ -81,10 +81,10 @@ export default function Profile() {
         <div className="mt-4 p-3 rounded-xl" style={{ backgroundColor: '#F5F7FA' }}>
           <p className="text-xs font-semibold text-gray-600 mb-2">How to improve your score:</p>
           <div className="flex flex-col gap-1 text-xs text-gray-500">
-            <p>✓ Verify your ID — +10 points</p>
-            <p>✓ Pay contributions on time — +5 per month</p>
-            <p>✓ Complete a full 3-cycle group — +30 points</p>
-            <p>✓ Refer a member who completes — +10 points</p>
+            <p>✓ Verify your ID +10 points</p>
+            <p>✓ Pay contributions on time +5 per month</p>
+            <p>✓ Complete a full 3-cycle group +30 points</p>
+            <p>✓ Refer a member who completes +10 points</p>
           </div>
         </div>
       </Card>
@@ -109,7 +109,7 @@ export default function Profile() {
                      style={{ backgroundColor: '#F5F7FA' }}>
                   <div>
                     <p className="text-sm font-medium text-gray-800">
-                      Tier {g.tier} — {tierLabels[g.tier]}
+                      Tier {g.tier} {tierLabels[g.tier]}
                     </p>
                     <p className="text-xs text-gray-400">
                       {new Date(g.createdAt).toLocaleDateString('en-ZA')}

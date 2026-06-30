@@ -12,10 +12,10 @@ async function connect() {
     connection = await amqplib.connect(process.env.RABBITMQ_URL);
     channel = await connection.createChannel();
     await channel.assertExchange(EXCHANGE, 'topic', { durable: true });
-    logger.info('RabbitMQ connected — exchange: ' + EXCHANGE);
+    logger.info('RabbitMQ connected exchange: ' + EXCHANGE);
 
     connection.on('close', () => {
-      logger.warn('RabbitMQ closed — reconnecting in 5s...');
+      logger.warn('RabbitMQ closed reconnecting in 5s...');
       channel = null;
       connection = null;
       setTimeout(connect, RECONNECT_DELAY);
@@ -30,7 +30,7 @@ async function connect() {
 
 async function publish(routingKey, payload) {
   if (!channel) {
-    logger.warn('RabbitMQ not ready — skipping event: ' + routingKey);
+    logger.warn('RabbitMQ not ready skipping event: ' + routingKey);
     return false;
   }
   try {

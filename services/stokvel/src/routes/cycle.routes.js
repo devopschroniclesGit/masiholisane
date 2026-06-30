@@ -14,7 +14,7 @@ module.exports = router;
 // Reinstate suspended member after repayment
 router.post('/:groupId/reinstate', authenticate, financialLimiter, cycleController.reinstateMember);
 
-// TEST ONLY — manually trigger dropout coverage for a member
+// TEST ONLY manually trigger dropout coverage for a member
 // Remove before production
 router.post('/:groupId/test-dropout/:userId', async (req, res, next) => {
   try {
@@ -35,7 +35,7 @@ router.post('/:groupId/test-dropout/:userId', async (req, res, next) => {
       return await handleDropout(tx, groupId, userId, cycle.id, group.tier);
     });
 
-    // Check if all 3 now paid — trigger payout if so
+    // Check if all 3 now paid trigger payout if so
     const paidCount = await prisma.stokvelContribution.count({
       where: {
         cycleId: cycle.id,

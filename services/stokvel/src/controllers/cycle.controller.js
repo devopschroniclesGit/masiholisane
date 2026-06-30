@@ -43,6 +43,11 @@ async function contribute(req, res, next) {
     const cycle = await prisma.stokvelCycle.findFirst({ where: { groupId, status: 'collecting' } });
     if (!cycle) return sendError(res, 400, 'No active cycle to contribute to');
 
+    // Recipient does not contribute to their own cycle
+    if (cycle.recipientId === userId) {
+      return sendError(res, 400, 'You are the recipient of this cycle no contribution needed');
+    }
+
     const existing = await prisma.stokvelContribution.findFirst({
       where: { cycleId: cycle.id, userId, type: 'contribution', status: 'paid' },
     });
@@ -60,6 +65,18 @@ async function contribute(req, res, next) {
     await prisma.$transaction(async (tx) => {
       await tx.account.update({ where: { userId }, data: { balance: { decrement: amount } } });
 
+      // Record contribution transaction (debit)
+      await tx.transaction.create({
+        data: {
+          fromAccountId:  account.id,
+          amount:         amount,
+          type:           'contribution',
+          status:         'completed',
+          idempotencyKey: `contribute-${cycle.id}-${userId}-${Date.now()}`,
+          description:    `Tier ${group.tier} contribution Cycle ${cycle.cycleNumber}`,
+        },
+      });
+
       await tx.stokvelContribution.create({
         data: {
           cycleId:  cycle.id,
@@ -73,25 +90,54 @@ async function contribute(req, res, next) {
         },
       });
 
-      await tx.escrowAccount.update({
-        where: { groupId },
-        data:  { platformFees: { increment: platformFee } },
-      });
+      // Trust score +5 for paying on time
+      const trust = await tx.trustScore.findUnique({ where: { userId } });
+      if (trust) {
+        const newScore = Math.min(100, trust.score + 5);
+        let newTier = 'new';
+        if (newScore >= 90) newTier = 'elite';
+        else if (newScore >= 70) newTier = 'good';
+        else if (newScore >= 50) newTier = 'trusted';
+        else if (newScore >= 30) newTier = 'new';
+        else newTier = 'restricted';
+
+        await tx.trustScore.update({
+          where: { userId },
+          data:  { score: newScore, tier: newTier },
+        });
+        await tx.trustScoreEvent.create({
+          data: {
+            userId,
+            scoreId:     trust.id,
+            event:       'contribution_paid',
+            delta:       newScore - trust.score,
+            scoreBefore: trust.score,
+            scoreAfter:  newScore,
+            reason:      `On-time contribution Cycle ${cycle.cycleNumber}`,
+          },
+        });
+      }
 
       const paidCount = await tx.stokvelContribution.count({
         where: { cycleId: cycle.id, type: 'contribution', status: { in: ['paid', 'covered_by_backup'] } },
       });
 
-      if (paidCount >= 3) {
+      // 2 contributors needed (recipient does not contribute their own cycle)
+      if (paidCount >= 2) {
         await _processPayout(tx, cycle, group, toPot);
       }
     });
+
+    // Fetch final trust score after update
+    const finalTrust = await prisma.trustScore.findUnique({ where: { userId } });
 
     return sendSuccess(res, {
       contributed: amount,
       toPot,
       platformFee,
-      message: `R${amount / 100} contributed. R${platformFee / 100} platform fee. R${toPot / 100} added to pot.`,
+      trustScore:  finalTrust?.score,
+      trustTier:   finalTrust?.tier,
+      message:     `R${amount / 100} contributed to pot.`,
     }, 'Contribution successful');
 
   } catch (err) { next(err); }
@@ -179,22 +225,22 @@ async function handleDropout(tx, groupId, userId, cycleId, tier) {
         where: { groupId, userId },
         data:  { status: 'blacklisted' },
       });
-      logger.error(`Member ${userId} BLACKLISTED — received payout then defaulted`);
+      logger.error(`Member ${userId} BLACKLISTED received payout then defaulted`);
       publish('stokvel.member.blacklisted', { userId, groupId }).catch(() => {});
     } else {
       await tx.stokvelMember.updateMany({
         where: { groupId, userId },
         data:  { status: 'suspended' },
       });
-      logger.warn(`Member ${userId} suspended — covered by escrow. Owes: R${toPot / 100}`);
+      logger.warn(`Member ${userId} suspended covered by escrow. Owes: R${toPot / 100}`);
       publish('stokvel.member.suspended', { userId, groupId, amountOwed: toPot }).catch(() => {});
     }
 
     return { covered: true, amountCovered: toPot };
 
   } else {
-    // ── NOT COVERED — refund everyone and cancel ──────────────────────────────
-    logger.warn(`Group ${groupId} — escrow insufficient. Reversing all contributions.`);
+    // ── NOT COVERED refund everyone and cancel ──────────────────────────────
+    logger.warn(`Group ${groupId} escrow insufficient. Reversing all contributions.`);
 
     const paidContributions = await tx.stokvelContribution.findMany({
       where: { cycleId, type: 'contribution', status: 'paid' },
@@ -240,20 +286,37 @@ async function handleDropout(tx, groupId, userId, cycleId, tier) {
       publish('stokvel.group.cancelled', {
         groupId,
         userId:  member.userId,
-        reason:  'Group cancelled — dropout could not be covered. All funds returned.',
+        reason:  'Group cancelled dropout could not be covered. All funds returned.',
       }).catch(() => {});
     }
 
-    logger.info(`Group ${groupId} cancelled — all funds returned`);
+    logger.info(`Group ${groupId} cancelled all funds returned`);
     return { covered: false, refunded: true, groupCancelled: true };
   }
 }
 
 // ── Process payout ────────────────────────────────────────────────────────────
 async function _processPayout(tx, cycle, group, toPot) {
-  const totalPot = toPot * 3;
+  // Pot = contribution from (GROUP_SIZE - 1) members
+  const totalPot = toPot * 2;
 
   await tx.account.update({ where: { userId: cycle.recipientId }, data: { balance: { increment: totalPot } } });
+
+  // Record payout transaction (credit)
+  const recipientAccount = await tx.account.findUnique({ where: { userId: cycle.recipientId } });
+  if (recipientAccount) {
+    await tx.transaction.create({
+      data: {
+        toAccountId:    recipientAccount.id,
+        amount:         totalPot,
+        type:           'payout',
+        status:         'completed',
+        idempotencyKey: `payout-${cycle.id}-${Date.now()}`,
+        description:    `Stokvel payout Tier ${group.tier} cycle ${cycle.cycleNumber}`,
+      },
+    });
+  }
+
   await tx.stokvelCycle.update({ where: { id: cycle.id }, data: { status: 'paid', paidAt: new Date(), totalPot } });
 
   logger.info(`Payout R${totalPot / 100} to ${cycle.recipientId}`);
@@ -275,22 +338,35 @@ async function _processPayout(tx, cycle, group, toPot) {
 
 // ── Complete group ────────────────────────────────────────────────────────────
 async function _completeGroup(tx, groupId, tier) {
-  const depositAmount = getSecurityDeposit(tier);
   const members = await tx.stokvelMember.findMany({
     where: { groupId, status: { in: ['active', 'completed'] } },
   });
 
+  // Mark all members as completed (no deposit refund in this model)
   for (const member of members) {
-    await tx.account.update({ where: { userId: member.userId }, data: { balance: { increment: depositAmount } } });
-    await tx.stokvelMember.update({ where: { id: member.id }, data: { status: 'completed' } });
-    logger.info(`Deposit R${depositAmount / 100} returned to ${member.userId}`);
+    await tx.stokvelMember.update({
+      where: { id: member.id },
+      data:  { status: 'completed' },
+    });
   }
 
-  await tx.escrowAccount.update({ where: { groupId }, data: { securityFund: 0, released: true } });
-  await tx.stokvelGroup.update({ where: { id: groupId }, data: { status: 'completed' } });
+  // Close the escrow account
+  await tx.escrowAccount.update({
+    where: { groupId },
+    data:  { securityFund: 0, released: true },
+  });
 
-  logger.info(`Group ${groupId} completed`);
-  publish('stokvel.group.completed', { groupId, tier, memberIds: members.map(m => m.userId) }).catch(() => {});
+  // Mark the group as completed
+  await tx.stokvelGroup.update({
+    where: { id: groupId },
+    data:  { status: 'completed' },
+  });
+
+  logger.info(`Group ${groupId} completed (Tier ${tier})`);
+  publish('stokvel.group.completed', {
+    groupId, tier,
+    memberIds: members.map(m => m.userId),
+  }).catch(() => {});
 }
 
 module.exports = { getGroupCycles, getCurrentCycle, contribute, reinstateMember, handleDropout };

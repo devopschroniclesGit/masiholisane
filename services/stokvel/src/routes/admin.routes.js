@@ -14,7 +14,7 @@ router.delete('/groups/:groupId', adminController.cancelGroup);
 
 module.exports = router;
 
-// TEST ONLY — drain a user wallet to simulate dropout
+// TEST ONLY drain a user wallet to simulate dropout
 // Remove before production
 router.post('/test/drain-wallet/:userId', async (req, res) => {
   const prisma = require('../../../../shared/config/database');

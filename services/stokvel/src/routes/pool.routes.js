@@ -6,6 +6,7 @@ const poolController = require('../controllers/pool.controller');
 const router = express.Router();
 
 router.get('/pool/:tier', authenticate, poolController.getPoolStatus);
+router.get('/pool-waiting/my', authenticate, poolController.getMyWaitingStatus);
 router.post('/join', authenticate, joinLimiter, financialLimiter, poolController.joinPool);
 router.delete('/join/:groupId', authenticate, poolController.leavePool);
 

@@ -3,36 +3,35 @@ import { useNavigate } from 'react-router-dom';
 import { stokvelAPI } from '../services/api';
 import Card from '../components/Card';
 import Button from '../components/Button';
+import TierBadge from '../components/TierBadge';
+import AlertModal from '../components/AlertModal';
 
 const TIERS = [
   {
-    tier:       1,
-    name:       'Starter',
-    amount:     500,
-    deposit:    500,
-    pot:        1470,
-    minScore:   30,
-    color:      '#3A8B2F',
+    tier:        1,
+    name:        'Starter',
+    amount:      500,
+    pot: 1000,
+    minScore:    30,
+    color:       '#3A8B2F',
     description: 'Perfect for first-time savers',
   },
   {
-    tier:       2,
-    name:       'Builder',
-    amount:     1000,
-    deposit:    1000,
-    pot:        2940,
-    minScore:   50,
-    color:      '#1B2F5E',
+    tier:        2,
+    name:        'Builder',
+    amount:      1000,
+    pot: 2000,
+    minScore:    50,
+    color:       '#1B2F5E',
     description: 'For working professionals',
   },
   {
-    tier:       3,
-    name:       'Wealth',
-    amount:     2000,
-    deposit:    2000,
-    pot:        5880,
-    minScore:   70,
-    color:      '#E8621A',
+    tier:        3,
+    name:        'Wealth',
+    amount:      2000,
+    pot: 4000,
+    minScore:    70,
+    color:       '#E8621A',
     description: 'Serious savers and business owners',
   },
 ];
@@ -45,7 +44,6 @@ export default function JoinPool() {
   const [error, setError]           = useState('');
 
   useEffect(() => {
-    // Fetch pool status for all tiers
     Promise.all(TIERS.map(t => stokvelAPI.getPoolStatus(t.tier)))
       .then(results => {
         const status = {};
@@ -63,8 +61,12 @@ export default function JoinPool() {
     setError('');
     try {
       const res = await stokvelAPI.joinPool(selected);
-      const { groupId } = res.data.data;
-      navigate(`/group/${groupId}`);
+      const { groupId, groupStatus } = res.data.data;
+      if (groupStatus === 'active') {
+        navigate(`/group/${groupId}`);
+      } else {
+        navigate('/dashboard?joined=' + selected);
+      }
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to join pool');
     } finally {
@@ -83,34 +85,9 @@ export default function JoinPool() {
         </p>
       </div>
 
-      {/* Why Stokvel */}
-      <Card>
-        <h3 className="font-bold text-sm mb-3" style={{ color: '#1B2F5E' }}>
-          Why join instead of saving alone?
-        </h3>
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div className="p-3 rounded-xl bg-red-50">
-            <p className="font-semibold text-red-700 mb-1">Saving alone ✗</p>
-            <p className="text-xs text-gray-600">Month 1: R500 — easy to spend</p>
-            <p className="text-xs text-gray-600">Month 2: R1,000 — still tempting</p>
-            <p className="text-xs text-gray-600">Month 3: Maybe R1,500?</p>
-          </div>
-          <div className="p-3 rounded-xl bg-green-50">
-            <p className="font-semibold mb-1" style={{ color: '#3A8B2F' }}>Masiholisane ✓</p>
-            <p className="text-xs text-gray-600">Month 1: R500 locked</p>
-            <p className="text-xs text-gray-600">Month 2: R500 locked</p>
-            <p className="text-xs text-gray-600">Month 3: R1,470 paid to you</p>
-          </div>
-        </div>
-        <p className="text-xs text-gray-500 mt-3 text-center">
-          Service fee: R10/month (R30 total). Less than a bank monthly fee.
-        </p>
-      </Card>
-
-      {/* Tier Selection */}
       <div className="flex flex-col gap-3">
         {TIERS.map(t => {
-          const status    = poolStatus[t.tier];
+          const status     = poolStatus[t.tier];
           const isSelected = selected === t.tier;
 
           return (
@@ -119,19 +96,14 @@ export default function JoinPool() {
               onClick={() => setSelected(t.tier)}
               className="text-left rounded-2xl border-2 p-5 transition-all"
               style={{
-                borderColor:       isSelected ? t.color : '#e5e7eb',
-                backgroundColor:   isSelected ? `${t.color}10` : 'white',
-              }}
-            >
+                borderColor:     isSelected ? t.color : '#e5e7eb',
+                backgroundColor: isSelected ? `${t.color}10` : 'white',
+              }}>
+
               <div className="flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
-                    <span
-                      className="text-xs font-bold px-2 py-0.5 rounded-full text-white"
-                      style={{ backgroundColor: t.color }}
-                    >
-                      TIER {t.tier}
-                    </span>
+                    <TierBadge tier={t.tier} size="small" color={t.color} />
                     <span className="font-bold" style={{ color: t.color }}>
                       {t.name}
                     </span>
@@ -140,22 +112,29 @@ export default function JoinPool() {
                 </div>
                 <div className="text-right">
                   <p className="font-bold text-lg" style={{ color: t.color }}>
-                    R{t.amount.toLocaleString()}<span className="text-xs font-normal text-gray-400">/mo</span>
+                    R{t.amount.toLocaleString()}
+                    <span className="text-xs font-normal text-gray-400">/cycle</span>
                   </p>
-                  <p className="text-xs text-gray-500">Receive R{t.pot.toLocaleString()}</p>
+                  <p className="text-xs text-gray-500">
+                    Receive R{t.pot.toLocaleString()}
+                  </p>
                 </div>
               </div>
 
               <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                 <div className="text-center p-2 rounded-lg bg-gray-50">
-                  <p className="text-gray-400">Security deposit</p>
-                  <p className="font-semibold text-gray-700">R{t.deposit.toLocaleString()}</p>
-                  <p className="text-gray-400">returned</p>
+                  <p className="text-gray-400">You pay</p>
+                  <p className="font-semibold text-gray-700">
+                    R{t.amount} × 2
+                  </p>
+                  <p className="text-gray-400">cycles</p>
                 </div>
                 <div className="text-center p-2 rounded-lg bg-gray-50">
-                  <p className="text-gray-400">Service fee</p>
-                  <p className="font-semibold text-gray-700">R{t.amount * 0.02}/mo</p>
-                  <p className="text-gray-400">R{t.amount * 0.02 * 3} total</p>
+                  <p className="text-gray-400">You receive</p>
+                  <p className="font-semibold" style={{ color: t.color }}>
+                    R{t.pot.toLocaleString()}
+                  </p>
+                  <p className="text-gray-400">once</p>
                 </div>
                 <div className="text-center p-2 rounded-lg bg-gray-50">
                   <p className="text-gray-400">Pool status</p>
@@ -167,28 +146,27 @@ export default function JoinPool() {
               </div>
 
               <div className="mt-3 text-xs text-gray-500">
-                First month: R{(t.amount + t.deposit).toLocaleString()} •
-                Min Trust Score: {t.minScore} •
-                Max wait: 2 months
+                Join with R{t.amount} • Min Trust Score: {t.minScore} • Max wait: 2 months
               </div>
             </button>
           );
         })}
       </div>
 
-      {error && (
-        <div className="p-3 rounded-xl text-sm text-red-700 bg-red-50 border border-red-200">
-          {error}
-        </div>
-      )}
+      <AlertModal
+        open={!!error}
+        onClose={() => setError('')}
+        variant="error"
+        title="Cannot Join Pool"
+        message={error}
+      />
 
       <Button
         variant="primary"
         disabled={!selected}
         loading={joining}
         className="w-full py-4 text-base"
-        onClick={handleJoin}
-      >
+        onClick={handleJoin}>
         {selected ? `Join Tier ${selected} Pool` : 'Select a tier to continue'}
       </Button>
     </div>

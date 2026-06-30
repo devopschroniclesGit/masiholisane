@@ -39,11 +39,12 @@ model User {
 }
 
 model Account {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  balance   Int      @default(0) // stored in cents — R500 = 50000
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  balance      Int      @default(0) // cash balance in cents
+  bonusBalance Int      @default(0) // VAS-only credit in cents
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id])
 
@@ -273,4 +274,68 @@ model Admin {
   role      String   @default("admin") // admin | superadmin
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model AdminAuditLog {
+  id        String   @id @default(uuid())
+  adminId   String
+  action    String
+  targetId  String?
+  details   Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+
+model PromoCode {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  amount      Int      // bonus amount in cents
+  maxUses     Int      @default(100)
+  usedCount   Int      @default(0)
+  expiresAt   DateTime?
+  active      Boolean  @default(true)
+  createdBy   String   // admin ID
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  redemptions PromoCodeRedemption[]
+
+  @@index([code])
+  @@index([active])
+}
+
+model PromoCodeRedemption {
+  id          String    @id @default(uuid())
+  promoCodeId String
+  userId      String
+  amount      Int
+  redeemedAt  DateTime  @default(now())
+
+  promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Cascade)
+
+  @@unique([promoCodeId, userId])
+  @@index([userId])
+}
+
+model SavedRecipient {
+  id          String   @id @default(uuid())
+  userId      String
+  type        String   // 'airtime_data', 'electricity'
+  label       String   // e.g. "Mom", "Home Meter"
+  network     String?  // For airtime/data: Vodacom, MTN, etc
+  phoneNumber String?  // For airtime/data
+  meterNumber String?  // For electricity
+  provider    String?  // For electricity: Eskom, City of Cape Town, etc
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastUsedAt  DateTime?
+
+  @@index([userId])
+  @@index([userId, type])
 }

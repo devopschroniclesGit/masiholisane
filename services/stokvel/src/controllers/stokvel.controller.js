@@ -118,7 +118,7 @@ async function acceptSwap(req, res, next) {
       });
     });
 
-    return sendSuccess(res, null, 'Swap accepted — positions updated');
+    return sendSuccess(res, null, 'Swap accepted positions updated');
   } catch (err) { next(err); }
 }
 

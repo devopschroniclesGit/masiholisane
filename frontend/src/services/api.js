@@ -9,8 +9,16 @@ const api = axios.create({
 
 // Attach token to every request
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  // Prefer admin token when calling admin endpoints
+  const isAdminCall = config.url?.includes('/admin/');
+  const adminToken  = localStorage.getItem('adminToken');
+  const userToken   = localStorage.getItem('token');
+
+  if (isAdminCall && adminToken) {
+    config.headers.Authorization = `Bearer ${adminToken}`;
+  } else if (userToken) {
+    config.headers.Authorization = `Bearer ${userToken}`;
+  }
   return config;
 });
 
@@ -36,6 +44,7 @@ export const authAPI = {
 // ── Stokvels ──────────────────────────────────────────────────────────────────
 export const stokvelAPI = {
   getPoolStatus: (tier)    => api.get(`/stokvels/pool/${tier}`),
+  getMyWaitingStatus: ()   => api.get('/stokvels/pool-waiting/my'),
   joinPool:      (tier)    => api.post('/stokvels/join', { tier }),
   getMyGroups:   ()        => api.get('/stokvels/my'),
   getGroup:      (id)      => api.get(`/stokvels/${id}`),
@@ -49,7 +58,28 @@ export const stokvelAPI = {
 
 // ── Wallet ────────────────────────────────────────────────────────────────────
 export const walletAPI = {
-  getBalance: () => api.get('/wallet/balance'),
+  getBalance: (days) => api.get('/wallet/balance' + (days ? `?days=${days}` : '')),
+  withdraw:   (amount) => api.post('/wallet/withdraw', { amount }),
+};
+
+export const promoAPI = {
+  redeem: (code) => api.post('/promos/redeem', { code }),
+};
+
+export const adminPromoAPI = {
+  list:        () => api.get('/admin/dashboard/promos'),
+  create:      (data) => api.post('/admin/dashboard/promos', data),
+  redemptions: (id) => api.get(`/admin/dashboard/promos/${id}/redemptions`),
+  toggle:      (id, active) => api.patch(`/admin/dashboard/promos/${id}`, { active }),
+};
+
+export const vasAPI = {
+  products:        ()       => api.get('/vas/products'),
+  purchase:        (data)   => api.post('/vas/purchase', data),
+  history:         ()       => api.get('/vas/history'),
+  recipients:      ()       => api.get('/vas/recipients'),
+  saveRecipient:   (data)   => api.post('/vas/recipients', data),
+  deleteRecipient: (id)     => api.delete(`/vas/recipients/${id}`),
 };
 
 export default api;

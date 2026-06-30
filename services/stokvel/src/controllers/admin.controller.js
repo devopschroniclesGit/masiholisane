@@ -37,7 +37,7 @@ async function triggerPayout(req, res, next) {
     const cycle = await prisma.stokvelCycle.findUnique({ where: { id: req.params.cycleId } });
     if (!cycle) return sendError(res, 404, 'Cycle not found');
     if (cycle.status === 'paid') return sendError(res, 400, 'Cycle already paid');
-    return sendSuccess(res, null, 'Manual payout triggered — implement full payout logic here');
+    return sendSuccess(res, null, 'Manual payout triggered implement full payout logic here');
   } catch (err) { next(err); }
 }
 

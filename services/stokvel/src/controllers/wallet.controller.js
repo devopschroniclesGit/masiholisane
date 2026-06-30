@@ -5,65 +5,66 @@ async function getBalance(req, res, next) {
   try {
     const userId  = req.user.id;
 
-    const account = await prisma.account.findUnique({
-      where: { userId },
-    });
+    const account = await prisma.account.findUnique({ where: { userId } });
+    if (!account) return sendError(res, 404, 'Wallet not found');
 
-    if (!account) {
-      return sendError(res, 404, 'Wallet not found');
-    }
-
-    // Get locked amount — contributions locked for active cycles
-    const activeMemberships = await prisma.stokvelMember.findMany({
+    // Get all forming/active groups for the user
+    const memberships = await prisma.stokvelMember.findMany({
       where: {
         userId,
-        status: 'active',
-        group:  { status: 'active' },
+        status: { in: ['active', 'suspended'] },
+        group:  { status: { in: ['forming', 'active'] } },
       },
       include: {
-        group: { include: { cycles: { where: { status: 'collecting' } } } },
-      },
-    });
-
-    // Check security deposits in escrow
-    const escrowAccounts = await prisma.escrowTransaction.findMany({
-      where: {
-        userId,
-        type:      'security_deposit',
-        direction: 'in',
-      },
-      include: {
-        escrow: {
-          include: {
-            group: { select: { status: true } },
-          },
+        group: {
+          include: { escrow: true },
         },
       },
     });
 
-    const lockedDeposits = escrowAccounts
-      .filter(et => ['active', 'forming'].includes(et.escrow?.group?.status))
-      .reduce((sum, et) => sum + et.amount, 0);
+    // Sum up reservation amounts held per group (first cycle contribution)
+    const TIER_AMOUNTS = { 1: 50000, 2: 100000, 3: 200000 }; // cents
+    const heldBreakdown = memberships.map(m => ({
+      groupId:   m.group.id,
+      tier:      m.group.tier,
+      tierLabel: { 1: 'Starter', 2: 'Builder', 3: 'Wealth' }[m.group.tier],
+      amount:    m.group.status === 'forming' ? (TIER_AMOUNTS[m.group.tier] || 0) : 0,
+      status:    m.group.status,
+      formatted: `R${((m.group.status === 'forming' ? TIER_AMOUNTS[m.group.tier] : 0) / 100).toFixed(2)}`,
+      label:     m.group.status === 'forming' ? 'First cycle locked in' : 'Active',
+    })).filter(h => h.amount > 0);
 
-    // Recent transactions
+    const totalHeld = heldBreakdown.reduce((sum, h) => sum + h.amount, 0);
+    const totalBalance = account.balance + totalHeld;
+
+    // Recent transactions with optional date filter
+    const days = parseInt(req.query.days);
+    const dateFilter = (days && days > 0)
+      ? { createdAt: { gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) } }
+      : {};
+
     const recentTransactions = await prisma.transaction.findMany({
       where: {
-        OR: [
-          { fromAccountId: account.id },
-          { toAccountId:   account.id },
+        AND: [
+          { OR: [{ fromAccountId: account.id }, { toAccountId: account.id }] },
+          dateFilter,
         ],
       },
       orderBy: { createdAt: 'desc' },
-      take:    10,
+      take:    100,
     });
 
+    const bonusBalance = account.bonusBalance || 0;
     return sendSuccess(res, {
-      balance:          account.balance,
-      balanceFormatted: `R${(account.balance / 100).toFixed(2)}`,
-      lockedDeposits,
-      lockedFormatted:  `R${(lockedDeposits / 100).toFixed(2)}`,
-      available:        account.balance,
+      available:          account.balance,
       availableFormatted: `R${(account.balance / 100).toFixed(2)}`,
+      bonus:              bonusBalance,
+      bonusFormatted:     `R${(bonusBalance / 100).toFixed(2)}`,
+      held:               totalHeld,
+      heldFormatted:      `R${(totalHeld / 100).toFixed(2)}`,
+      total:              totalBalance + bonusBalance,
+      totalFormatted:     `R${((totalBalance + bonusBalance) / 100).toFixed(2)}`,
+      heldBreakdown,
       recentTransactions,
     });
   } catch (err) { next(err); }
@@ -91,4 +92,65 @@ async function getTransactions(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { getBalance, getTransactions };
+async function withdraw(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { amount } = req.body;
+
+    if (!amount || amount < 5000) {
+      return sendError(res, 400, 'Minimum withdrawal is R50.00');
+    }
+
+    const account = await prisma.account.findUnique({ where: { userId } });
+    if (!account) return sendError(res, 404, 'Wallet not found');
+
+    if (account.balance < amount) {
+      return sendError(res, 400, `Insufficient balance. Available: R${(account.balance / 100).toFixed(2)}`);
+    }
+
+    const fee = Math.floor(amount * 0.02);
+    const netToBank = amount - fee;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.account.update({
+        where: { userId },
+        data:  { balance: { decrement: amount } },
+      });
+
+      await tx.transaction.create({
+        data: {
+          fromAccountId:  account.id,
+          amount:         amount,
+          type:           'withdrawal',
+          status:         'pending', // Will be 'completed' when bank confirms
+          idempotencyKey: `withdraw-${userId}-${Date.now()}`,
+          description:    `Withdrawal to bank R${(netToBank / 100).toFixed(2)}`,
+        },
+      });
+
+      await tx.transaction.create({
+        data: {
+          fromAccountId:  account.id,
+          amount:         fee,
+          type:           'fee',
+          status:         'completed',
+          idempotencyKey: `withdrawal-fee-${userId}-${Date.now()}`,
+          description:    `Withdrawal fee (2%)`,
+        },
+      });
+    });
+
+    return sendSuccess(res, {
+      requested:   amount,
+      fee,
+      netToBank,
+      formatted:   {
+        requested: `R${(amount / 100).toFixed(2)}`,
+        fee:       `R${(fee / 100).toFixed(2)}`,
+        netToBank: `R${(netToBank / 100).toFixed(2)}`,
+      },
+    }, 'Withdrawal initiated. Funds arrive in 1-2 business days.');
+  } catch (err) { next(err); }
+}
+
+module.exports = { getBalance, getTransactions, withdraw };

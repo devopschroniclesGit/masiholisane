@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express  = require('express');
 const helmet   = require('helmet');
 const cors     = require('cors');
@@ -8,6 +9,8 @@ const { apiLimiter }   = require('../../../shared/middleware/rateLimiter');
 const { sendSuccess }  = require('../../../shared/utils/response');
 
 const poolRoutes    = require('./routes/pool.routes');
+const promoRoutes   = require('./routes/promo.routes');
+const vasRoutes     = require('./routes/vas.routes');
 const stokvelRoutes = require('./routes/stokvel.routes');
 const cycleRoutes   = require('./routes/cycle.routes');
 const adminRoutes   = require('./routes/admin.routes');
@@ -22,8 +25,8 @@ const PORT = process.env.PORT || 3005;
 
 const ALLOWED_ORIGINS = [
   'http://localhost:5173',
-  'http://192.168.56.12:5173',
   'http://127.0.0.1:5173',
+  ...(process.env.CORS_ORIGINS || '').split(',').filter(Boolean),
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
@@ -50,6 +53,8 @@ app.get('/api/v1/health', (req, res) => {
 
 app.use('/api/v1/auth',             authRoutes);
 app.use('/api/v1/wallet',           walletRoutes);
+app.use('/api/v1/promos',   promoRoutes);
+app.use('/api/v1/vas',      vasRoutes);
 app.use('/api/v1/admin/auth',       adminAuthRoutes);
 app.use('/api/v1/admin/dashboard',  adminDashRoutes);
 app.use('/api/v1/stokvels',         poolRoutes);

@@ -7,7 +7,7 @@ const { authenticate } = require('../../../../shared/middleware/auth');
 
 const router = express.Router();
 
-// TEMPORARY — for local testing only
+// TEMPORARY for local testing only
 // Remove before production
 router.post('/login', async (req, res, next) => {
   try {
@@ -38,7 +38,7 @@ router.post('/login', async (req, res, next) => {
 
 module.exports = router;
 
-// GET /me — return current user profile with Trust Score
+// GET /me return current user profile with Trust Score
 router.get('/me', authenticate, async (req, res, next) => {
   try {
     const prisma = require('../../../../shared/config/database');

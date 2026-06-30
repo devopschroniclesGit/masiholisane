@@ -7,10 +7,11 @@ function sendSuccess(res, data = {}, message = 'Success', statusCode = 200) {
   });
 }
 
-function sendError(res, statusCode = 500, message = 'Something went wrong') {
+function sendError(res, statusCode = 500, message = 'Something went wrong', data = null) {
   return res.status(statusCode).json({
     success: false,
     message,
+    ...(data && { data }),
     timestamp: new Date().toISOString(),
   });
 }

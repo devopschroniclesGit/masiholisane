@@ -23,6 +23,16 @@ router.post('/login', async (req, res, next) => {
       { expiresIn: '8h' }
     );
 
+    // Log admin login
+    await prisma.adminAuditLog.create({
+      data: {
+        adminId:   admin.id,
+        action:    'admin_login',
+        details:   { email: admin.email, role: admin.role },
+        ipAddress: req.ip,
+      },
+    }).catch(() => {});
+
     return sendSuccess(res, {
       token,
       admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },

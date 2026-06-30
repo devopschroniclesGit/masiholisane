@@ -2,7 +2,7 @@
 // Date calculations for cycle due dates
 // Handles SA public holidays and weekends
 
-// SA public holidays — fixed dates (MM-DD format)
+// SA public holidays fixed dates (MM-DD format)
 const FIXED_HOLIDAYS = [
   '01-01', // New Year's Day
   '03-21', // Human Rights Day
@@ -53,12 +53,12 @@ function getSAHolidays(year) {
   // Easter-based holidays
   const easter = getEasterSunday(year);
 
-  // Good Friday — 2 days before Easter
+  // Good Friday 2 days before Easter
   const goodFriday = new Date(easter);
   goodFriday.setDate(goodFriday.getDate() - 2);
   holidays.add(formatDate(goodFriday));
 
-  // Family Day — day after Easter Monday
+  // Family Day day after Easter Monday
   const familyDay = new Date(easter);
   familyDay.setDate(familyDay.getDate() + 1);
   holidays.add(formatDate(familyDay));
@@ -116,8 +116,8 @@ function toLastWorkingDay(date) {
  * Calculate cycle due date
  * 30 days from activation, adjusted to last working day
  *
- * @param {Date} fromDate  — group activation date
- * @param {number} cycleNumber — 1, 2, or 3
+ * @param {Date} fromDate  group activation date
+ * @param {number} cycleNumber 1, 2, or 3
  * @returns {Date} due date
  */
 function calculateCycleDueDate(fromDate, cycleNumber) {

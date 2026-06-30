@@ -6,17 +6,24 @@ import Card from '../components/Card';
 import Button from '../components/Button';
 import TrustBadge from '../components/TrustBadge';
 import Countdown from '../components/Countdown';
+import FormingGroupCard from '../components/FormingGroupCard';
+import TierBadge from '../components/TierBadge';
 
 export default function Dashboard() {
   const { user }        = useAuth();
   const navigate        = useNavigate();
-  const [groups, setGroups]   = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [groups, setGroups]       = useState([]);
+  const [waitingStatus, setWaitingStatus] = useState(null);
+  const [loading, setLoading]     = useState(true);
 
   useEffect(() => {
-    stokvelAPI.getMyGroups()
-      .then(res => setGroups(res.data.data.groups || []))
-      .catch(() => {})
+    Promise.all([
+      stokvelAPI.getMyGroups(),
+      stokvelAPI.getMyWaitingStatus(),
+    ]).then(([g, w]) => {
+      setGroups(g.data.data.groups || []);
+      if (w.data.data.waiting) setWaitingStatus(w.data.data);
+    }).catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
@@ -69,6 +76,23 @@ export default function Dashboard() {
           My Groups
         </h2>
 
+        {waitingStatus && (
+          <div className="mb-4">
+            <FormingGroupCard
+              initialStatus={waitingStatus}
+              onUpdate={(newStatus) => {
+                setWaitingStatus(newStatus);
+                if (!newStatus) {
+                  // Group activated or user left refresh groups
+                  stokvelAPI.getMyGroups()
+                    .then(res => setGroups(res.data.data.groups || []))
+                    .catch(() => {});
+                }
+              }}
+            />
+          </div>
+        )}
+
         {loading ? (
           <Card>
             <p className="text-gray-400 text-sm text-center py-4">Loading...</p>
@@ -91,18 +115,13 @@ export default function Dashboard() {
               const myPayoutCycle = group.cycles?.find(c => c.cycleNumber === myPosition);
               const tierLabels   = { 1: 'Starter', 2: 'Builder', 3: 'Wealth' };
               const tierAmounts  = { 1: 500, 2: 1000, 3: 2000 };
-              const potAmounts   = { 1: 1470, 2: 2940, 3: 5880 };
+              const potAmounts   = { 1: 1000, 2: 2000, 3: 4000 };
 
               return (
                 <Card key={group.id}>
                   <div className="flex items-start justify-between mb-4">
                     <div>
-                      <span
-                        className="text-xs font-bold px-2 py-1 rounded-full text-white"
-                        style={{ backgroundColor: '#1B2F5E' }}
-                      >
-                        TIER {group.tier} — {tierLabels[group.tier]}
-                      </span>
+                      <TierBadge tier={group.tier} showName />
                       <p className="text-xs text-gray-500 mt-2">
                         R{tierAmounts[group.tier]}/month
                       </p>
