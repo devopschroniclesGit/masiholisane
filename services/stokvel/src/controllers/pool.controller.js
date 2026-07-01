@@ -79,7 +79,7 @@ async function joinPool(req, res, next) {
       return sendError(res, 400, `You need R${(needed / 100).toFixed(2)} more in your wallet to join Tier ${tierInt}. Joining locks in your first cycle contribution of R${(tierAmount / 100).toFixed(2)}.`);
     }
 
-    const minScoreForTier = { 1: 30, 2: 50, 3: 70 };
+    const minScoreForTier = { 1: 10, 2: 50, 3: 70 }; // Tier 1 = ID-verification floor only, since joining already requires it
     const currentScore    = trustScore?.score || 0;
     if (currentScore < minScoreForTier[tierInt]) {
       return sendError(res, 403,

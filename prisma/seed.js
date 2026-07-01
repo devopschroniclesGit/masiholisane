@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('\n🌱 Seeding database...\n');
+  console.log('\nSeeding database...\n');
   const hash = await bcrypt.hash('Password123!', 12);
 
   const users = [
@@ -17,8 +17,8 @@ async function main() {
   for (const u of users) {
     const user = await prisma.user.upsert({
       where: { email: u.email },
-      update: {},
-      create: { email: u.email, password: hash, name: u.name, verified: u.verified },
+      update: { phoneVerified: true, verified: u.verified },
+      create: { email: u.email, password: hash, name: u.name, verified: u.verified, phoneVerified: true },
     });
 
     await prisma.account.upsert({
@@ -44,13 +44,13 @@ async function main() {
         },
       });
     }
-    console.log('  ✓ ' + u.name + ' — R' + (u.balance/100) + ' | Trust: ' + u.score + ' (' + u.tier + ')');
+    console.log('  [seeded] ' + u.name + ' — R' + (u.balance/100) + ' | Trust: ' + u.score + ' (' + u.tier + ')');
   }
 
-  console.log('\n✅ Done! Password for all users: Password123!\n');
+  console.log('\nDone. Password for all users: Password123!\n');
 }
 
 main()
-  .catch(e => { console.error('❌', e); process.exit(1); })
+  .catch(e => { console.error('Seed failed:', e); process.exit(1); })
   .finally(() => prisma.$disconnect());
 

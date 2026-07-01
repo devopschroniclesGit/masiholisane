@@ -1,25 +1,31 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { Link } from 'react-router-dom';
 import logo from '../assets/logo.png';
 
 export default function Login() {
-  const [email, setEmail]       = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError]       = useState('');
-  const [loading, setLoading]   = useState(false);
-  const { login }               = useAuth();
-  const navigate                = useNavigate();
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword]     = useState('');
+  const [error, setError]           = useState('');
+  const [loading, setLoading]       = useState(false);
+  const { login }                   = useAuth();
+  const navigate                    = useNavigate();
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      await login(email, password);
+      await login(identifier, password);
       navigate('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed. Please try again.');
+      const data = err.response?.data;
+      if (data?.data?.requiresOtp && data?.data?.phone) {
+        navigate('/verify-otp', { state: { phone: data.data.phone } });
+        return;
+      }
+      setError(data?.message || 'Login failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -50,14 +56,14 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email Address
+                Phone or Email
               </label>
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                type="text"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 required
-                placeholder="you@example.com"
+                placeholder="082 123 4567 or you@example.com"
                 className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2"
                 style={{ '--tw-ring-color': '#1B2F5E' }}
               />
@@ -87,16 +93,22 @@ export default function Login() {
             </button>
           </form>
 
+          <p className="text-center text-sm text-gray-500 mt-4">
+            Don't have an account?{' '}
+            <Link to="/register" className="font-semibold" style={{ color: '#1B2F5E' }}>Sign up</Link>
+          </p>
+
           <div className="mt-6 p-4 rounded-xl" style={{ backgroundColor: '#F5F7FA' }}>
             <p className="text-xs text-gray-500 font-medium mb-2">Test Accounts:</p>
             {[
               { email: 'thabo@masiholisane.co.za', note: 'Trust 65' },
               { email: 'nomsa@masiholisane.co.za', note: 'Trust 75' },
               { email: 'zanele@masiholisane.co.za', note: 'Trust 55' },
+              { email: 'sipho@masiholisane.co.za', note: 'Trust 10, ID not verified' },
             ].map(u => (
               <button
                 key={u.email}
-                onClick={() => { setEmail(u.email); setPassword('Password123!'); }}
+                onClick={() => { setIdentifier(u.email); setPassword('Password123!'); }}
                 className="block w-full text-left text-xs py-1 hover:underline"
                 style={{ color: '#1B2F5E' }}
               >

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { stokvelAPI } from '../services/api';
 import Card from '../components/Card';
@@ -41,7 +42,7 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: '#1B2F5E' }}>
-            Sawubona, {user?.name?.split(' ')[0]} 👋
+            Welcome back, {user?.name?.split(' ')[0]}
           </h1>
           <p className="text-gray-500 text-sm mt-1">Your savings dashboard</p>
         </div>
@@ -178,9 +179,10 @@ export default function Dashboard() {
                   )}
 
                   {membership.status === 'suspended' && (
-                    <div className="rounded-xl p-3 mb-4 bg-red-50 border border-red-200">
+                    <div className="rounded-xl p-3 mb-4 bg-red-50 border border-red-200 flex items-start gap-2">
+                      <AlertTriangle size={16} className="flex-shrink-0 mt-0.5 text-red-600" />
                       <p className="text-sm text-red-700 font-medium">
-                        ⚠️ Your membership is suspended. Top up your wallet and repay your missed contribution.
+                        Your membership is suspended. Top up your wallet and repay your missed contribution.
                       </p>
                     </div>
                   )}

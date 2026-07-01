@@ -19,16 +19,25 @@ datasource db {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String
-  idNumber  String?  @unique // SA ID number — set after verification
-  verified  Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                  String    @id @default(uuid())
+  phone               String?   @unique
+  phoneVerified       Boolean   @default(false)
+  email               String?   @unique
+  password            String
+  name                String
+  idNumber            String?   @unique
+  verified            Boolean   @default(false)
+  idDocumentPath      String?
+  idVerificationStatus String   @default("unverified")
+  idSubmittedAt       DateTime?
+  idReviewedAt        DateTime?
+  idReviewedBy        String?
+  idRejectionReason   String?
+  deletionRequestedAt DateTime?
+  deletedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  // Relations
   account        Account?
   trustScore     TrustScore?
   stokvelMembers StokvelMember[]
@@ -36,6 +45,31 @@ model User {
   trustEvents    TrustScoreEvent[]
 
   @@index([email])
+  @@index([phone])
+  @@index([idVerificationStatus])
+}
+
+model VasFeeConfig {
+  id          String   @id @default(uuid())
+  productType String   @unique
+  feePercent  Float    @default(0)
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?
+
+  @@map("vas_fee_configs")
+}
+
+model OtpCode {
+  id        String   @id @default(uuid())
+  phone     String
+  code      String // 6-digit code
+  purpose   String   @default("registration") // registration | login (future)
+  consumed  Boolean  @default(false)
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([phone, purpose, consumed])
 }
 
 model Account {

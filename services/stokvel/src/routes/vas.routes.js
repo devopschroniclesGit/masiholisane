@@ -9,13 +9,32 @@ const NETWORKS = {
   data:    ['Vodacom', 'MTN', 'Cell C', 'Telkom'],
 };
 
+// Defaults used only if no VasFeeConfig row exists yet for a product type
+// (e.g. right after the migration, before an admin has set anything).
+// Electricity defaults to 0% — token prices are regulated (NRS 057), most
+// resellers can't add a margin directly on top of the tariff. Leave it at
+// 0 unless you've confirmed a markup is actually allowed for your setup.
+const DEFAULT_FEE_PERCENT = { airtime: 3, data: 3, electricity: 0 };
+
+async function getFeePercent(productType) {
+  const config = await prisma.vasFeeConfig.findUnique({ where: { productType } });
+  return config ? config.feePercent : (DEFAULT_FEE_PERCENT[productType] ?? 0);
+}
+
 // GET /vas/products — list available products
 router.get('/products', authenticate, async (req, res, next) => {
   try {
+    const [airtimeFee, dataFee, electricityFee] = await Promise.all([
+      getFeePercent('airtime'),
+      getFeePercent('data'),
+      getFeePercent('electricity'),
+    ]);
+
     return sendSuccess(res, {
       airtime: {
         networks: NETWORKS.airtime,
         amounts:  [1000, 2000, 5000, 10000, 20000, 5000000], // R10-R500 in cents
+        feePercent: airtimeFee,
       },
       data: {
         networks: NETWORKS.data,
@@ -26,11 +45,13 @@ router.get('/products', authenticate, async (req, res, next) => {
           { id: 'data_2gb',   label: '2 GB',   price: 15000, validity: '30 days' },
           { id: 'data_5gb',   label: '5 GB',   price: 30000, validity: '30 days' },
         ],
+        feePercent: dataFee,
       },
       electricity: {
         providers: ['Eskom', 'City of Cape Town', 'City of Johannesburg', 'eThekwini'],
         minAmount: 5000,    // R50
         maxAmount: 500000,  // R5,000
+        feePercent: electricityFee,
       },
     });
   } catch (err) { next(err); }
@@ -64,13 +85,19 @@ router.post('/purchase', authenticate, async (req, res, next) => {
     const account = await prisma.account.findUnique({ where: { userId } });
     if (!account) return sendError(res, 404, 'Wallet not found');
 
+    // amount is the face value the member receives (e.g. R50 airtime).
+    // The fee is added on top — the member pays face value + fee, we keep the fee.
+    const feePercent = await getFeePercent(type);
+    const feeAmount  = Math.round(amount * feePercent / 100);
+    const totalCharge = amount + feeAmount;
+
     // Check for duplicate purchase within last 60 seconds
     const sixtySecondsAgo = new Date(Date.now() - 60 * 1000);
     const duplicate = await prisma.transaction.findFirst({
       where: {
         fromAccountId: account.id,
         type:          'vas',
-        amount,
+        amount:        totalCharge,
         createdAt:     { gte: sixtySecondsAgo },
         description:   { contains: phoneNumber || meterNumber || '' },
       },
@@ -83,15 +110,15 @@ router.post('/purchase', authenticate, async (req, res, next) => {
     }
 
     const totalBalance = account.balance + (account.bonusBalance || 0);
-    if (totalBalance < amount) {
+    if (totalBalance < totalCharge) {
       return sendError(res, 400,
-        `Insufficient balance. Have R${(totalBalance / 100).toFixed(2)}, need R${(amount / 100).toFixed(2)}`
+        `Insufficient balance. Have R${(totalBalance / 100).toFixed(2)}, need R${(totalCharge / 100).toFixed(2)} (R${(amount / 100).toFixed(2)} + R${(feeAmount / 100).toFixed(2)} fee)`
       );
     }
 
     // Spend bonus first, then cash
-    const fromBonus = Math.min(amount, account.bonusBalance || 0);
-    const fromCash  = amount - fromBonus;
+    const fromBonus = Math.min(totalCharge, account.bonusBalance || 0);
+    const fromCash  = totalCharge - fromBonus;
 
     const { saveAs, recipientId } = req.body;
 
@@ -104,19 +131,22 @@ router.post('/purchase', authenticate, async (req, res, next) => {
         },
       });
 
-      // Single transaction record for the purchase
-      const desc = type === 'airtime' ? `Airtime — ${network} ${phoneNumber}`
-                 : type === 'data'    ? `Data — ${network} ${phoneNumber}`
-                 :                       `Electricity — ${provider} ${meterNumber}`;
+      // Single transaction record for the purchase — amount is the TOTAL
+      // charged (face value + fee), consistent with every other transaction
+      // in the app representing real money movement.
+      const desc = type === 'airtime' ? `Airtime, ${network} ${phoneNumber}`
+                 : type === 'data'    ? `Data, ${network} ${phoneNumber}`
+                 :                       `Electricity, ${provider} ${meterNumber}`;
 
       await tx.transaction.create({
         data: {
           fromAccountId:  account.id,
-          amount,
+          amount:         totalCharge,
           type:           'vas',
           status:         'completed',
           idempotencyKey: `vas-${type}-${userId}-${Date.now()}`,
-          description:    desc + (fromBonus > 0 ? ` (R${(fromBonus/100).toFixed(2)} from bonus)` : ''),
+          description:    desc + (feeAmount > 0 ? ` (R${(amount/100).toFixed(2)} + R${(feeAmount/100).toFixed(2)} fee)` : '')
+                                + (fromBonus > 0 ? ` (R${(fromBonus/100).toFixed(2)} from bonus)` : ''),
         },
       });
     });
@@ -153,7 +183,12 @@ router.post('/purchase', authenticate, async (req, res, next) => {
     return sendSuccess(res, {
       type,
       amount,
-      formatted:    `R${(amount / 100).toFixed(2)}`,
+      formatted:     `R${(amount / 100).toFixed(2)}`,
+      feePercent,
+      feeAmount,
+      feeFormatted:  `R${(feeAmount / 100).toFixed(2)}`,
+      totalCharge,
+      totalFormatted: `R${(totalCharge / 100).toFixed(2)}`,
       paidFromBonus: fromBonus,
       paidFromCash:  fromCash,
       ...(voucher && { voucher }),

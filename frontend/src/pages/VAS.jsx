@@ -86,7 +86,7 @@ export default function VAS() {
       }, 200);
     } catch (err) {
       // Check for duplicate warning
-      if (err.response?.status === 409 && err.response?.data?.data?.duplicatee) {
+      if (err.response?.status === 409 && err.response?.data?.data?.duplicate) {
         setShowDuplicateConfirm({
           message: err.response.data.message,
         });
@@ -118,6 +118,9 @@ export default function VAS() {
   }
 
   const config = products?.[selected];
+  const feePercent  = config?.feePercent || 0;
+  const feeAmount   = form.amount ? Math.round(form.amount * feePercent / 100) : 0;
+  const totalCharge = (form.amount || 0) + feeAmount;
 
   return (
     <div className="max-w-2xl mx-auto flex flex-col gap-6">
@@ -151,7 +154,7 @@ export default function VAS() {
         <Card>
           <h3 className="font-bold text-sm mb-3 flex items-center gap-2" style={{ color: '#1B2F5E' }}>
             <Star size={16} style={{ color: '#E8621A' }} />
-            Quick Buy — Saved Recipients
+            Quick Buy, Saved Recipients
           </h3>
           <div className="grid grid-cols-2 gap-2">
             {recipients.map(r => (
@@ -321,9 +324,22 @@ export default function VAS() {
 
             {form.amount > 0 && (
               <div className="rounded-xl p-3 text-sm" style={{ backgroundColor: '#F0FDF4' }}>
-                <p className="text-gray-600">You will pay <strong>R{form.amount / 100}</strong></p>
-                <p className="text-xs text-gray-500 mt-1">
-                  Bonus used first (R{Math.min(form.amount, balance?.bonus || 0) / 100}),
+                <div className="flex justify-between text-gray-600">
+                  <span>{selected === 'electricity' ? 'Voucher value' : 'Value sent'}</span>
+                  <span>R{(form.amount / 100).toFixed(2)}</span>
+                </div>
+                {feeAmount > 0 && (
+                  <div className="flex justify-between text-gray-600">
+                    <span>Service fee ({feePercent}%)</span>
+                    <span>R{(feeAmount / 100).toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between font-semibold pt-1 mt-1 border-t border-green-200" style={{ color: '#1B2F5E' }}>
+                  <span>You will pay</span>
+                  <span>R{(totalCharge / 100).toFixed(2)}</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Bonus used first (R{Math.min(totalCharge, balance?.bonus || 0) / 100}),
                   then cash
                 </p>
               </div>
@@ -335,7 +351,7 @@ export default function VAS() {
               style={{ backgroundColor: '#3A8B2F' }}>
               {purchasing ? 'Processing...' : (
                 <>
-                  Pay R{(form.amount || 0) / 100}
+                  Pay R{(totalCharge / 100).toFixed(2)}
                   <ArrowRight size={16} />
                 </>
               )}
@@ -380,7 +396,7 @@ export default function VAS() {
                    }}>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-gray-800 truncate">
-                    {t.description.split('—')[0] || t.description}
+                    {t.description.split(',')[0] || t.description}
                   </p>
                   <p className="text-xs text-gray-400">
                     {new Date(t.createdAt).toLocaleDateString('en-ZA', {

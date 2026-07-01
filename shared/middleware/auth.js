@@ -1,4 +1,5 @@
-const jwt = require('jsonwebtoken');
+const jwt     = require('jsonwebtoken');
+const prisma  = require('../config/database');
 const { sendError } = require('../utils/response');
 
 function authenticate(req, res, next) {
@@ -23,4 +24,22 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-module.exports = { authenticate, requireAdmin };
+// Gates financial actions (join pool, withdraw) behind SA ID verification.
+// Must run after `authenticate`. Checks the live DB value rather than the
+// JWT payload, since verification status can change mid-session.
+async function requireIdVerified(req, res, next) {
+  try {
+    const user = await prisma.user.findUnique({
+      where:  { id: req.user.id },
+      select: { verified: true },
+    });
+    if (!user?.verified) {
+      return sendError(res, 403, 'Verify your ID to continue. Go to your profile to verify.', {
+        requiresIdVerification: true,
+      });
+    }
+    next();
+  } catch (err) { next(err); }
+}
+
+module.exports = { authenticate, requireAdmin, requireIdVerified };

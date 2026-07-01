@@ -16,8 +16,8 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
-  async function login(email, password) {
-    const res = await authAPI.login(email, password);
+  async function login(identifier, password) {
+    const res = await authAPI.login(identifier, password);
     const { token, user } = res.data.data;
     localStorage.setItem('token', token);
     try {
@@ -33,6 +33,34 @@ export function AuthProvider({ children }) {
     }
   }
 
+  // Completes registration: confirms the OTP and logs the user straight in.
+  async function verifyOtpLogin(phone, code) {
+    const res = await authAPI.verifyOtp(phone, code);
+    const { token, user } = res.data.data;
+    localStorage.setItem('token', token);
+    try {
+      const profile = await api.get('/auth/me');
+      const fullUser = profile.data.data;
+      localStorage.setItem('user', JSON.stringify(fullUser));
+      setUser(fullUser);
+      return fullUser;
+    } catch {
+      localStorage.setItem('user', JSON.stringify(user));
+      setUser(user);
+      return user;
+    }
+  }
+
+  // Re-fetches the current user — used after ID verification so `verified`
+  // and trustScore reflect the change without requiring a re-login.
+  async function refreshUser() {
+    const profile = await api.get('/auth/me');
+    const fullUser = profile.data.data;
+    localStorage.setItem('user', JSON.stringify(fullUser));
+    setUser(fullUser);
+    return fullUser;
+  }
+
   function logout() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -40,7 +68,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, verifyOtpLogin, refreshUser, logout }}>
       {children}
     </AuthContext.Provider>
   );

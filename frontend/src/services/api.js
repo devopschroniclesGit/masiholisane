@@ -37,8 +37,35 @@ api.interceptors.response.use(
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 export const authAPI = {
-  login:    (email, password) => api.post('/auth/login', { email, password }),
-  register: (name, email, password) => api.post('/auth/register', { name, email, password }),
+  login:      (identifier, password) => api.post('/auth/login', { identifier, password }),
+  register:   (name, phone, password) => api.post('/auth/register', { name, phone, password }),
+  verifyOtp:  (phone, code) => api.post('/auth/verify-otp', { phone, code }),
+  resendOtp:  (phone) => api.post('/auth/resend-otp', { phone }),
+  // formData must contain fields: idNumber, idDocument (file)
+  verifyId:   (formData) => api.post('/auth/verify-id', formData, {
+    headers: { 'Content-Type': undefined }, // let the browser set the multipart boundary
+  }),
+  getTrustHistory:  () => api.get('/auth/trust-history'),
+  requestDeletion:  () => api.post('/auth/request-deletion'),
+};
+
+// ── Admin: Account Deletion Requests ────────────────────────────────────────
+export const adminDeletionAPI = {
+  list:    () => api.get('/admin/dashboard/deletion-requests'),
+  process: (userId) => api.post(`/admin/dashboard/deletion-requests/${userId}/process`),
+};
+
+// ── Admin: ID Verifications ─────────────────────────────────────────────────
+export const adminVerificationAPI = {
+  list:     (status = 'pending') => api.get(`/admin/dashboard/id-verifications?status=${status}`),
+  approve:  (userId) => api.post(`/admin/dashboard/id-verifications/${userId}/approve`),
+  reject:   (userId, reason) => api.post(`/admin/dashboard/id-verifications/${userId}/reject`, { reason }),
+  // Returns a blob — the document endpoint requires an admin Bearer token,
+  // which an <img src> can't send, so the image must be fetched and turned
+  // into an object URL in the component.
+  getDocumentBlob: (userId) => api.get(`/admin/dashboard/id-verifications/${userId}/document`, {
+    responseType: 'blob',
+  }),
 };
 
 // ── Stokvels ──────────────────────────────────────────────────────────────────
@@ -47,6 +74,7 @@ export const stokvelAPI = {
   getMyWaitingStatus: ()   => api.get('/stokvels/pool-waiting/my'),
   joinPool:      (tier)    => api.post('/stokvels/join', { tier }),
   getMyGroups:   ()        => api.get('/stokvels/my'),
+  getAlerts:     ()        => api.get('/stokvels/alerts'),
   getGroup:      (id)      => api.get(`/stokvels/${id}`),
   getCycles:     (id)      => api.get(`/stokvels/${id}/cycles`),
   getCurrentCycle: (id)    => api.get(`/stokvels/${id}/cycles/current`),
@@ -73,6 +101,17 @@ export const adminPromoAPI = {
   toggle:      (id, active) => api.patch(`/admin/dashboard/promos/${id}`, { active }),
 };
 
+// ── Admin: Audit Logs ───────────────────────────────────────────────────────
+export const adminLogsAPI = {
+  list: (params = {}) => {
+    const query = new URLSearchParams(
+      Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== ''))
+    ).toString();
+    return api.get(`/admin/dashboard/audit-logs${query ? `?${query}` : ''}`);
+  },
+  actions: () => api.get('/admin/dashboard/audit-logs/actions'),
+};
+
 export const vasAPI = {
   products:        ()       => api.get('/vas/products'),
   purchase:        (data)   => api.post('/vas/purchase', data),
@@ -80,6 +119,12 @@ export const vasAPI = {
   recipients:      ()       => api.get('/vas/recipients'),
   saveRecipient:   (data)   => api.post('/vas/recipients', data),
   deleteRecipient: (id)     => api.delete(`/vas/recipients/${id}`),
+};
+
+// ── Admin: VAS Fees ──────────────────────────────────────────────────────────
+export const adminVasFeesAPI = {
+  list:   () => api.get('/admin/dashboard/vas-fees'),
+  update: (productType, feePercent) => api.put(`/admin/dashboard/vas-fees/${productType}`, { feePercent }),
 };
 
 export default api;
