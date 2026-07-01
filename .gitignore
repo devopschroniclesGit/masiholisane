@@ -10,3 +10,4 @@ logs/
 .DS_Store
 coverage/
 services/stokvel/uploads/
+apply-*.sh
